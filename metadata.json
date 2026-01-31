@@ -1,0 +1,7 @@
+{
+  "name": "Craft Cannabis Kiosk",
+  "description": "A high-performance check-in kiosk and queue management system for Craft Cannabis, featuring ID scanning, loyalty lookups, and TV-ready queue displays.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

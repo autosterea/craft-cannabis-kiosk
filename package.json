@@ -1,0 +1,70 @@
+{
+  "name": "craft-cannabis-kiosk",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Craft Cannabis Kiosk - Customer Check-in Application",
+  "main": "dist-electron/main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "electron:dev": "concurrently -k \"vite\" \"wait-on http://localhost:3001 && npm run electron:start\"",
+    "electron:start": "tsc -p tsconfig.electron.json && cp electron/preload.cjs dist-electron/preload.cjs && electron .",
+    "electron:build": "npm run build && tsc -p tsconfig.electron.json && cp electron/preload.cjs dist-electron/preload.cjs && electron-builder",
+    "electron:publish": "npm run build && tsc -p tsconfig.electron.json && cp electron/preload.cjs dist-electron/preload.cjs && electron-builder --publish always",
+    "electron:rebuild": "electron-rebuild -f -w better-sqlite3",
+    "postinstall": "electron-rebuild -f -w better-sqlite3"
+  },
+  "dependencies": {
+    "@google/genai": "^1.38.0",
+    "better-sqlite3": "^12.6.2",
+    "electron-store": "^11.0.2",
+    "electron-updater": "^6.7.3",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.2",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.14.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "concurrently": "^9.2.1",
+    "electron": "^40.0.0",
+    "electron-builder": "^26.4.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0",
+    "wait-on": "^9.0.3"
+  },
+  "build": {
+    "appId": "com.craftcannabis.kiosk",
+    "productName": "Craft Cannabis Kiosk",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "public/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "installerIcon": "public/icon.ico",
+      "uninstallerIcon": "public/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Craft Kiosk"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "autosterea",
+      "repo": "craft-cannabis-kiosk",
+      "private": true
+    }
+  }
+}
