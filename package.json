@@ -48,14 +48,13 @@
     ],
     "win": {
       "target": [
-        "nsis"
+        "nsis",
+        "zip"
       ],
-      "icon": "public/icon.ico"
+      "signAndEditExecutable": false
     },
     "nsis": {
       "oneClick": true,
-      "installerIcon": "public/icon.ico",
-      "uninstallerIcon": "public/icon.ico",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Craft Kiosk"
