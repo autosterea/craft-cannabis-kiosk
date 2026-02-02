@@ -2,16 +2,18 @@
 import React, { useState } from 'react';
 import { Customer } from '../../types';
 import { lookupCustomer, updateCustomer, KioskCustomer } from '../../services/kioskApi';
+import TouchKeyboard from './TouchKeyboard';
 
 interface PhoneEntryProps {
   onComplete: (data: Partial<Customer>) => void;
 }
 
-type Step = 'PHONE' | 'SEARCHING' | 'FOUND' | 'LOYALTY_PROMPT' | 'UPDATING_LOYALTY' | 'NAME';
+type Step = 'PHONE' | 'SEARCHING' | 'FOUND' | 'LOYALTY_PROMPT' | 'EMAIL_ENTRY' | 'UPDATING_LOYALTY' | 'NAME';
 
 const PhoneEntry: React.FC<PhoneEntryProps> = ({ onComplete }) => {
   const [phone, setPhone] = useState('');
   const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
   const [step, setStep] = useState<Step>('PHONE');
   const [foundCustomer, setFoundCustomer] = useState<KioskCustomer | null>(null);
   const [loading, setLoading] = useState(false);
@@ -97,17 +99,25 @@ const PhoneEntry: React.FC<PhoneEntryProps> = ({ onComplete }) => {
     );
   }
 
-  // Handle loyalty signup
-  const handleLoyaltySignup = async () => {
+  // Handle loyalty signup - go to email entry first
+  const handleLoyaltySignup = () => {
     if (!foundCustomer) return;
+    setEmail(''); // Clear any previous email
+    setStep('EMAIL_ENTRY');
+  };
+
+  // Submit email and complete loyalty signup
+  const submitEmailAndSignup = async () => {
+    if (!foundCustomer || !email) return;
 
     setStep('UPDATING_LOYALTY');
 
     try {
-      // Update customer in POSaBIT to enable loyalty
-      const updated = await updateCustomer(foundCustomer.id, {
+      // Update customer in POSaBIT with email and loyalty
+      await updateCustomer(foundCustomer.id, {
         loyaltyMember: true,
         marketingOptIn: true,
+        email: email,
       });
 
       // Update local state with new loyalty status
@@ -200,6 +210,35 @@ const PhoneEntry: React.FC<PhoneEntryProps> = ({ onComplete }) => {
           className="text-zinc-500 text-sm hover:text-zinc-300 transition-colors"
         >
           Not {foundCustomer.first_name}? Click here
+        </button>
+      </div>
+    );
+  }
+
+  // Email entry for loyalty signup
+  if (step === 'EMAIL_ENTRY' && foundCustomer) {
+    return (
+      <div className="w-full max-w-2xl bg-zinc-900/50 p-10 rounded-3xl border border-zinc-800 shadow-xl text-center">
+        <h2 className="text-3xl font-craft font-bold mb-2 text-gold uppercase tracking-wider">
+          Almost Done, {foundCustomer.first_name}!
+        </h2>
+        <p className="text-zinc-400 mb-6">
+          Enter your email to complete your loyalty signup
+        </p>
+
+        <TouchKeyboard
+          value={email}
+          onChange={setEmail}
+          onSubmit={submitEmailAndSignup}
+          placeholder="your@email.com"
+          type="email"
+        />
+
+        <button
+          onClick={() => setStep('FOUND')}
+          className="mt-6 text-zinc-500 text-sm hover:text-zinc-300 transition-colors"
+        >
+          ← Back
         </button>
       </div>
     );

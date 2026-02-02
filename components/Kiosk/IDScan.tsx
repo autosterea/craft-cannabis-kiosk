@@ -1,7 +1,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Customer } from '../../types';
-import { lookupCustomerByName, updateCustomer, KioskCustomer } from '../../services/kioskApi';
+import { lookupCustomerByName, updateCustomer, createCustomer, KioskCustomer } from '../../services/kioskApi';
+import TouchKeyboard from './TouchKeyboard';
 
 interface IDScanProps {
   onComplete: (data: Partial<Customer>) => void;
@@ -10,10 +11,21 @@ interface IDScanProps {
 interface ParsedLicense {
   firstName: string;
   lastName: string;
+  middleName?: string;
   licenseNumber?: string;
   dateOfBirth?: string;  // MMDDYYYY format
   age?: number;
   isOver21?: boolean;
+  // Address fields
+  address?: string;
+  city?: string;
+  state?: string;
+  zipCode?: string;
+  // Demographics
+  gender?: 'M' | 'F' | 'X';  // M=Male, F=Female, X=Non-binary/Other
+  eyeColor?: string;
+  height?: string;
+  expirationDate?: string;
 }
 
 // Calculate age from DOB string (MMDDYYYY format)
@@ -55,130 +67,126 @@ const formatDOB = (dob: string): string => {
 //   DAQ = License Number
 //   DBB = Date of Birth (MMDDYYYY)
 //   DBA = Expiration Date
+//   DAG = Street Address
+//   DAI = City
+//   DAJ = State
+//   DAK = Zip Code
+//   DBC = Sex (1=Male, 2=Female, 9=Not specified)
+//   DAY = Eye Color
+//   DAU = Height
 const parseDriversLicense = (scanData: string): ParsedLicense | null => {
   try {
     const fields: Record<string, string> = {};
 
-    // Log raw data for debugging
-    console.log('=== ID SCAN DEBUG ===');
-    console.log('Scan data length:', scanData.length);
-    console.log('Raw scan (first 500 chars):', scanData.substring(0, 500));
-    console.log('Raw scan (ALL):', scanData);
-    console.log('Raw scan hex (first 100):', [...scanData.substring(0, 100)].map(c =>
-      c.charCodeAt(0).toString(16).padStart(2, '0')).join(' '));
+    // All known AAMVA 3-letter field codes
+    const allFieldCodes = [
+      'DAA', 'DAB', 'DAC', 'DAD', 'DAE', 'DAF', 'DAG', 'DAH', 'DAI', 'DAJ', 'DAK', 'DAL', 'DAM', 'DAN', 'DAO', 'DAP', 'DAQ', 'DAR', 'DAS', 'DAT', 'DAU', 'DAV', 'DAW', 'DAX', 'DAY', 'DAZ',
+      'DBA', 'DBB', 'DBC', 'DBD', 'DBE', 'DBF', 'DBG', 'DBH', 'DBI', 'DBJ', 'DBK', 'DBL', 'DBM', 'DBN', 'DBO', 'DBP', 'DBQ', 'DBR', 'DBS',
+      'DCA', 'DCB', 'DCC', 'DCD', 'DCE', 'DCF', 'DCG', 'DCH', 'DCI', 'DCJ', 'DCK', 'DCL', 'DCM', 'DCN', 'DCO', 'DCP', 'DCQ', 'DCR', 'DCS', 'DCT', 'DCU',
+      'DDA', 'DDB', 'DDC', 'DDD', 'DDE', 'DDF', 'DDG', 'DDH', 'DDI', 'DDJ', 'DDK', 'DDL',
+      'DFN', 'DLN', 'DEN'
+    ];
 
-    // AAMVA field codes (3 letters starting with D) - comprehensive list
-    const knownCodes = ['DCS', 'DAC', 'DCT', 'DAD', 'DAQ', 'DBB', 'DBA', 'DBC', 'DBD', 'DCI', 'DCJ', 'DCK', 'DCL', 'DCM', 'DCN', 'DCO', 'DCP', 'DCQ', 'DCR', 'DCS', 'DCU', 'DDA', 'DDB', 'DDC', 'DDD', 'DDE', 'DDF', 'DDG', 'DDH', 'DDI', 'DDJ', 'DDK', 'DDL', 'DAW', 'DAZ', 'DEN', 'DCG', 'DAN', 'DFN', 'DLN', 'DCF', 'DDE', 'DDF', 'DDG', 'DAU', 'DAY', 'DAS', 'DAT', 'DBN', 'DBS'];
+    // Create a regex pattern to find all field codes and their positions
+    const fieldCodeRegex = new RegExp(`(${allFieldCodes.join('|')})`, 'g');
 
-    // Build regex that stops at next field code
-    // Match field code followed by value, stopping at next D[A-Z][A-Z] pattern
-    const fieldCodePattern = knownCodes.join('|');
+    // Find all field code positions
+    const matches: { code: string; index: number }[] = [];
+    let match;
+    while ((match = fieldCodeRegex.exec(scanData)) !== null) {
+      matches.push({ code: match[1], index: match.index });
+    }
 
-    // Extract each field by finding code and capturing until next code
-    for (const code of ['DCS', 'DAC', 'DCT', 'DAD', 'DAQ', 'DBB']) {
-      // Pattern: CODE followed by content until next known code or end
-      const pattern = new RegExp(`${code}([A-Z0-9\\-' ]+?)(?=${fieldCodePattern}|$)`, 'i');
-      const match = scanData.match(pattern);
-      if (match && match[1]) {
-        fields[code] = match[1].trim();
-        console.log(`Found ${code}:`, fields[code]);
+    // Extract value for each field code (from after code to next code)
+    for (let i = 0; i < matches.length; i++) {
+      const { code, index } = matches[i];
+      const startPos = index + 3; // After the 3-letter code
+      const endPos = i < matches.length - 1 ? matches[i + 1].index : scanData.length;
+
+      let value = scanData.substring(startPos, endPos);
+      // Clean control characters
+      value = value.replace(/[\x00-\x1F]/g, '').trim();
+
+      if (value && !fields[code]) {
+        fields[code] = value;
       }
     }
 
-    // Method 2: Split by control characters AND common delimiters
-    const segments = scanData.split(/[\x1D\x1E\x0A\x0D\n\r@]+/);
-    console.log('Segments found:', segments.length);
-
+    // Also try splitting by control characters as backup
+    const segments = scanData.split(/[\x1D\x1E\x0A\x0D\n\r]+/);
     for (const segment of segments) {
       const trimmed = segment.trim();
-      if (!trimmed) continue;
+      if (!trimmed || trimmed.length < 4) continue;
 
-      // Match 3-letter field codes followed by value
-      const match3 = trimmed.match(/^([A-Z]{3})(.+)$/i);
-      if (match3) {
-        const [, code, value] = match3;
-        const upperCode = code.toUpperCase();
+      // Match 3-letter field codes at start
+      const segMatch = trimmed.match(/^([A-Z]{3})(.+)$/);
+      if (segMatch && allFieldCodes.includes(segMatch[1])) {
+        const [, code, value] = segMatch;
         const cleanValue = value.replace(/[\x00-\x1F]/g, '').trim();
-        if (cleanValue && !fields[upperCode]) {
-          fields[upperCode] = cleanValue;
-          console.log(`Segment found ${upperCode}:`, cleanValue);
+        if (cleanValue && !fields[code]) {
+          fields[code] = cleanValue;
         }
       }
     }
 
-    console.log('All parsed fields:', fields);
-
     // Extract name fields with fallbacks
     let firstName = fields['DAC'] || fields['DCT'] || fields['DFN'] || '';
     let lastName = fields['DCS'] || fields['DLN'] || '';
+    const middleName = fields['DAD'] || '';
     const licenseNumber = fields['DAQ'] || fields['DAN'] || '';
     const dateOfBirth = fields['DBB'] || '';
+    const expirationDate = fields['DBA'] || '';
+
+    // Address fields - clean them properly
+    let address = fields['DAG'] || '';
+    let city = fields['DAI'] || '';
+    let state = fields['DAJ'] || '';
+    let zipCode = fields['DAK'] || '';
+
+    // State should be exactly 2 letters
+    if (state.length > 2) {
+      state = state.substring(0, 2);
+    }
+
+    // Clean zip code - first 5 digits only
+    zipCode = zipCode.replace(/[^0-9]/g, '').substring(0, 5);
+
+    // Demographics
+    const genderCode = fields['DBC'] || '';
+    let gender: 'M' | 'F' | 'X' | undefined;
+    if (genderCode === '1') gender = 'M';
+    else if (genderCode === '2') gender = 'F';
+    else if (genderCode) gender = 'X';
+
+    let eyeColor = fields['DAY'] || '';
+    let height = fields['DAU'] || '';
+
+    // Clean height - should be like "068 in" or "5-09"
+    if (height.length > 10) {
+      // Likely captured too much, extract just the height portion
+      const heightMatch = height.match(/^(\d{3}\s*in|\d-\d{2})/);
+      if (heightMatch) {
+        height = heightMatch[1];
+      } else {
+        height = height.substring(0, 6).trim();
+      }
+    }
 
     // Clean up names - remove trailing non-alpha chars but keep the name
     firstName = firstName.replace(/[^A-Za-z\-' ]/g, '').trim();
     lastName = lastName.replace(/[^A-Za-z\-' ]/g, '').trim();
 
+    // If middle name is "NONE", clear it
+    const cleanMiddle = middleName.replace(/[^A-Za-z\-' ]/g, '').trim();
+
     // Take only first word if multiple
     if (firstName.includes(' ')) firstName = firstName.split(/\s+/)[0];
     if (lastName.includes(' ')) lastName = lastName.split(/\s+/)[0];
 
-    // Method 3: If standard parsing fails, try alternative patterns
-    if (!firstName) {
-      // Look for "DAC" followed by uppercase letters
-      const altFirstMatch = scanData.match(/DAC\s*([A-Z]{2,})/i);
-      if (altFirstMatch) {
-        firstName = altFirstMatch[1];
-        console.log('Alt pattern found firstName:', firstName);
-      }
-    }
-
-    if (!lastName) {
-      // Look for "DCS" followed by uppercase letters
-      const altLastMatch = scanData.match(/DCS\s*([A-Z]{2,})/i);
-      if (altLastMatch) {
-        lastName = altLastMatch[1];
-        console.log('Alt pattern found lastName:', lastName);
-      }
-    }
-
-    // Method 4: California-specific - look for pattern after "DAA" header
-    if (!firstName || !lastName) {
-      // California format: DAA followed by data, names appear after specific markers
-      const daaMatch = scanData.match(/DAA([^@\n\r]+)/);
-      if (daaMatch) {
-        console.log('DAA content:', daaMatch[1]);
-      }
-    }
-
-    // Method 5: Last resort - extract name-like words (3+ chars, alpha only)
-    if (!firstName) {
-      // Find ALL CAPS words that look like names (3-15 chars)
-      const allCapsWords = scanData.match(/\b[A-Z]{3,15}\b/g);
-      if (allCapsWords) {
-        console.log('All caps words found:', allCapsWords);
-        // Filter out known field codes and common non-name words
-        const nonNames = ['ANSI', 'AAMVA', 'DCS', 'DAC', 'DAQ', 'DBB', 'DBA', 'DCT', 'DAD', 'DDF', 'DDG'];
-        const nameWords = allCapsWords.filter(w => !nonNames.includes(w) && w.length >= 3);
-        if (nameWords.length >= 2) {
-          // AAMVA typically: LAST FIRST MIDDLE
-          lastName = nameWords[0];
-          firstName = nameWords[1];
-          console.log('Extracted from caps words:', { firstName, lastName });
-        } else if (nameWords.length === 1) {
-          firstName = nameWords[0];
-        }
-      }
-    }
-
     // Calculate age from DOB
     const ageInfo = calculateAge(dateOfBirth);
-    console.log('Age calculation:', ageInfo);
-
-    console.log('Final extracted:', { firstName, lastName, licenseNumber, dateOfBirth, ...ageInfo });
-    console.log('=== END DEBUG ===');
 
     if (!firstName) {
-      console.warn('Could not parse first name from license data');
       return null;
     }
 
@@ -188,10 +196,21 @@ const parseDriversLicense = (scanData: string): ParsedLicense | null => {
     return {
       firstName: properCase(firstName),
       lastName: lastName ? properCase(lastName) : '',
+      middleName: cleanMiddle && cleanMiddle.toUpperCase() !== 'NONE' ? properCase(cleanMiddle) : undefined,
       licenseNumber,
       dateOfBirth,
       age: ageInfo?.age,
       isOver21: ageInfo?.isOver21,
+      // Address
+      address: address || undefined,
+      city: city ? properCase(city) : undefined,
+      state: state?.toUpperCase() || undefined,
+      zipCode: zipCode || undefined,
+      // Demographics
+      gender,
+      eyeColor: eyeColor || undefined,
+      height: height || undefined,
+      expirationDate: expirationDate || undefined,
     };
   } catch (e) {
     console.error('Failed to parse license:', e);
@@ -200,10 +219,11 @@ const parseDriversLicense = (scanData: string): ParsedLicense | null => {
 };
 
 const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
-  const [status, setStatus] = useState<'READY' | 'SCANNING' | 'FOUND' | 'LOYALTY_PROMPT' | 'UPDATING_LOYALTY' | 'SUCCESS' | 'UNDERAGE'>('READY');
+  const [status, setStatus] = useState<'READY' | 'SCANNING' | 'FOUND' | 'LOYALTY_PROMPT' | 'EMAIL_ENTRY' | 'UPDATING_LOYALTY' | 'SUCCESS' | 'UNDERAGE' | 'INVALID_SCAN'>('READY');
   const [scanBuffer, setScanBuffer] = useState('');
   const [scannedInfo, setScannedInfo] = useState<ParsedLicense | null>(null);
   const [foundCustomer, setFoundCustomer] = useState<KioskCustomer | null>(null);
+  const [email, setEmail] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const bufferTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -249,43 +269,69 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
     resetScan();
 
     setStatus('SCANNING');
-    console.log('Processing scan data length:', scanData.length);
-    console.log('Raw scan data (first 200 chars):', scanData.substring(0, 200));
+
+    // Validate scan data before parsing
+    // Real AAMVA PDF417 barcodes are typically 200+ characters
+    // Small 1D barcodes or invalid scans are usually much shorter
+    const isLikelyValidBarcode = (data: string): boolean => {
+      // Check minimum length - AAMVA barcodes are typically 200-700 chars
+      if (data.length < 100) {
+        return false;
+      }
+
+      // Check for AAMVA header markers (ANSI, AAMVA, or starts with @)
+      const hasAAMVAMarker = data.includes('ANSI') ||
+                             data.includes('AAMVA') ||
+                             data.startsWith('@') ||
+                             data.includes('DL') ||
+                             data.includes('ID');
+
+      // Check for at least some known field codes
+      const fieldCodesFound = ['DCS', 'DAC', 'DAQ', 'DBB', 'DAG'].filter(code =>
+        data.includes(code)
+      ).length;
+
+      // Need marker or at least 2 field codes
+      return hasAAMVAMarker || fieldCodesFound >= 2;
+    };
+
+    // Check if this looks like a valid DL barcode
+    if (!isLikelyValidBarcode(scanData)) {
+      setStatus('INVALID_SCAN');
+      // Auto-reset after 4 seconds
+      setTimeout(() => {
+        resetScan();
+        setStatus('READY');
+      }, 4000);
+      return;
+    }
 
     // Parse the scanned data
     const parsed = parseDriversLicense(scanData);
 
     if (!parsed) {
-      console.warn('License parsing failed, using fallback');
-      setStatus('SUCCESS');
+      setStatus('INVALID_SCAN');
+      // Auto-reset after 4 seconds
       setTimeout(() => {
-        onComplete({
-          name: 'Guest',
-          lastNameInitial: '',
-          method: 'ID_SCAN',
-          loyaltyStatus: 'Guest'
-        });
-        // Reset state for next scan
-        setScannedInfo(null);
-        setFoundCustomer(null);
+        resetScan();
         setStatus('READY');
-      }, 800);
+      }, 4000);
+      return;
+    }
+
+    // Additional validation: must have at least first name AND (last name OR DOB)
+    if (!parsed.firstName || (!parsed.lastName && !parsed.dateOfBirth)) {
+      setStatus('INVALID_SCAN');
+      setTimeout(() => {
+        resetScan();
+        setStatus('READY');
+      }, 4000);
       return;
     }
 
     const firstName = parsed.firstName || 'Guest';
     const lastName = parsed.lastName || '';
     const lastInitial = lastName ? lastName[0].toUpperCase() : '';
-
-    console.log('Parsed from DL:', {
-      firstName,
-      lastName,
-      lastInitial,
-      licenseNumber: parsed.licenseNumber,
-      dob: parsed.dateOfBirth,
-      age: parsed.age,
-      isOver21: parsed.isOver21
-    });
 
     // Store scanned info for display
     setScannedInfo(parsed);
@@ -305,7 +351,6 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
     // Age verified - look up customer by name
     try {
       const result = await lookupCustomerByName(firstName, lastName);
-      console.log('Customer lookup result:', result);
 
       if (result.found && result.customer) {
         // Customer found in database!
@@ -318,14 +363,37 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
       console.error('Customer lookup failed:', error);
     }
 
-    // Customer not found - proceed as guest
+    // Customer not found - create customer record with DL demographics (no loyalty)
     setStatus('SUCCESS');
+
+    let newCustomerId: number | undefined;
+    try {
+      const newCustomer = await createCustomer({
+        firstName: firstName,
+        lastName: lastName || undefined,
+        telephone: '', // No phone from DL
+        loyaltyOptIn: false,
+        // Demographics from DL
+        address1: parsed.address,
+        city: parsed.city,
+        state: parsed.state,
+        zipCode: parsed.zipCode,
+        dateOfBirth: parsed.dateOfBirth,
+        gender: parsed.gender,
+      });
+      newCustomerId = newCustomer.id;
+    } catch (error) {
+      // Silently fail - still check them in as guest
+      console.error('Failed to create customer from DL:', error);
+    }
+
     setTimeout(() => {
       onComplete({
         name: firstName,
         lastNameInitial: lastInitial,
         method: 'ID_SCAN',
         loyaltyStatus: 'Guest',
+        customerId: newCustomerId,
         driversLicense: parsed.licenseNumber,
         dateOfBirth: parsed.dateOfBirth,
         age: parsed.age,
@@ -395,14 +463,16 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
     }
   };
 
-  // Manual trigger for testing
-  const handleManualScan = () => {
-    processScan('SAMPLE_SCAN_DATA_JOHN_DOE');
+  // Handle loyalty signup - go to email entry first
+  const handleLoyaltySignup = () => {
+    if (!foundCustomer || !scannedInfo) return;
+    setEmail(''); // Clear any previous email
+    setStatus('EMAIL_ENTRY');
   };
 
-  // Handle loyalty signup
-  const handleLoyaltySignup = async () => {
-    if (!foundCustomer || !scannedInfo) return;
+  // Submit email and complete loyalty signup
+  const submitEmailAndSignup = async () => {
+    if (!foundCustomer || !scannedInfo || !email) return;
 
     // Store data before changing state
     const customerData = {
@@ -419,15 +489,24 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
     setStatus('UPDATING_LOYALTY');
 
     try {
-      // Update customer in POSaBIT to enable loyalty
+      // Update customer in POSaBIT with email, loyalty, and demographics
       await updateCustomer(foundCustomer.id, {
         loyaltyMember: true,
         marketingOptIn: true,
+        email: email,
+        // Include demographics from DL
+        address1: scannedInfo.address,
+        city: scannedInfo.city,
+        state: scannedInfo.state,
+        zipCode: scannedInfo.zipCode,
+        dateOfBirth: scannedInfo.dateOfBirth,
+        gender: scannedInfo.gender,
       });
 
       // Reset state FIRST
       setScannedInfo(null);
       setFoundCustomer(null);
+      setEmail('');
       setStatus('READY');
       resetScan();
 
@@ -438,15 +517,50 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
       // Still check them in (but as their current status)
       setScannedInfo(null);
       setFoundCustomer(null);
+      setEmail('');
       setStatus('READY');
       resetScan();
       onComplete({ ...customerData, loyaltyStatus: 'Guest' });
     }
   };
 
-  // Skip loyalty and check in
-  const skipLoyalty = () => {
-    confirmFoundCustomer();
+  // Skip loyalty but still update demographics from DL
+  const skipLoyalty = async () => {
+    if (!foundCustomer || !scannedInfo) return;
+
+    // Store customer data before any state changes
+    const customerData = {
+      name: foundCustomer.first_name,
+      lastNameInitial: foundCustomer.last_name?.[0]?.toUpperCase() || '',
+      method: 'ID_SCAN',
+      loyaltyStatus: 'Guest' as const,
+      customerId: foundCustomer.id,
+      driversLicense: scannedInfo.licenseNumber,
+      dateOfBirth: scannedInfo.dateOfBirth,
+      age: scannedInfo.age,
+    };
+
+    // Update customer with demographics from DL (even without loyalty signup)
+    try {
+      await updateCustomer(foundCustomer.id, {
+        address1: scannedInfo.address,
+        city: scannedInfo.city,
+        state: scannedInfo.state,
+        zipCode: scannedInfo.zipCode,
+        dateOfBirth: scannedInfo.dateOfBirth,
+        gender: scannedInfo.gender,
+      });
+    } catch (error) {
+      // Silently fail - still check them in
+      console.error('Failed to update demographics:', error);
+    }
+
+    // Reset state and complete check-in
+    setScannedInfo(null);
+    setFoundCustomer(null);
+    setStatus('READY');
+    resetScan();
+    onComplete(customerData);
   };
 
   // FOUND state - Customer is LOYALTY MEMBER, show Welcome Back!
@@ -564,6 +678,35 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
     );
   }
 
+  // EMAIL_ENTRY state - Collect email for loyalty signup
+  if (status === 'EMAIL_ENTRY' && foundCustomer && scannedInfo) {
+    return (
+      <div className="text-center w-full max-w-2xl bg-zinc-900/50 p-10 rounded-3xl border border-zinc-800 shadow-xl">
+        <h2 className="text-3xl font-craft font-bold mb-2 text-gold uppercase tracking-wider">
+          Almost Done, {foundCustomer.first_name}!
+        </h2>
+        <p className="text-zinc-400 mb-6">
+          Enter your email to complete your loyalty signup
+        </p>
+
+        <TouchKeyboard
+          value={email}
+          onChange={setEmail}
+          onSubmit={submitEmailAndSignup}
+          placeholder="your@email.com"
+          type="email"
+        />
+
+        <button
+          onClick={() => setStatus('FOUND')}
+          className="mt-6 text-zinc-500 text-sm hover:text-zinc-300 transition-colors"
+        >
+          ← Back
+        </button>
+      </div>
+    );
+  }
+
   // UPDATING_LOYALTY state - Signing up for loyalty
   if (status === 'UPDATING_LOYALTY') {
     return (
@@ -577,13 +720,83 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
     );
   }
 
+  // INVALID_SCAN state - Wrong barcode scanned
+  if (status === 'INVALID_SCAN') {
+    return (
+      <div className="text-center w-full max-w-2xl bg-zinc-900/50 p-12 rounded-3xl border border-zinc-800 shadow-xl">
+        <div className="mb-8">
+          <div className="w-64 h-80 border-4 border-dashed rounded-2xl flex flex-col items-center justify-center mx-auto border-orange-500 bg-orange-500/20">
+            <svg className="w-24 h-24 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+        </div>
+
+        <h2 className="text-4xl font-craft font-bold mb-4 text-orange-500 uppercase tracking-tighter">
+          Wrong Barcode
+        </h2>
+        <p className="text-xl text-zinc-300 mb-4">
+          Please scan the <span className="text-gold font-bold">large 2D barcode</span>
+        </p>
+        <p className="text-lg text-zinc-400 mb-8">
+          on the <span className="text-white">back of your ID</span>
+        </p>
+
+        {/* Visual guide */}
+        <div className="mb-8 p-6 bg-zinc-800/50 rounded-xl border border-zinc-700 inline-block">
+          <div className="flex items-center gap-6">
+            {/* Wrong barcode */}
+            <div className="text-center">
+              <div className="w-20 h-8 bg-zinc-700 rounded mb-2 flex items-center justify-center">
+                <div className="flex gap-px">
+                  {[...Array(12)].map((_, i) => (
+                    <div key={i} className="w-1 h-5 bg-zinc-500" style={{ width: Math.random() > 0.5 ? '2px' : '1px' }}></div>
+                  ))}
+                </div>
+              </div>
+              <span className="text-red-400 text-sm">✗ Not this</span>
+            </div>
+
+            {/* Arrow */}
+            <div className="text-2xl text-zinc-500">→</div>
+
+            {/* Correct barcode */}
+            <div className="text-center">
+              <div className="w-20 h-20 bg-zinc-700 rounded mb-2 flex items-center justify-center p-2">
+                <div className="w-full h-full bg-gradient-to-br from-zinc-600 to-zinc-800 rounded grid grid-cols-4 gap-px p-1">
+                  {[...Array(16)].map((_, i) => (
+                    <div key={i} className={`${Math.random() > 0.5 ? 'bg-zinc-400' : 'bg-zinc-700'}`}></div>
+                  ))}
+                </div>
+              </div>
+              <span className="text-green-400 text-sm">✓ Scan this</span>
+            </div>
+          </div>
+        </div>
+
+        <p className="text-zinc-500 text-sm">
+          Resetting in a moment...
+        </p>
+
+        {/* Hidden input to maintain scanner focus */}
+        <input
+          ref={inputRef}
+          type="text"
+          className="opacity-0 absolute -left-[9999px]"
+          onChange={handleScanInput}
+          autoComplete="off"
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="text-center w-full max-w-2xl bg-zinc-900/50 p-12 rounded-3xl border border-zinc-800 shadow-xl">
       <div className="mb-12 relative inline-block">
         <div className={`w-64 h-80 border-4 border-dashed rounded-2xl flex flex-col items-center justify-center transition-all duration-300 ${
           status === 'SCANNING' ? 'border-gold bg-gold/20' :
           status === 'SUCCESS' || status === 'FOUND' ? 'border-green-500 bg-green-500/20' :
-          status === 'UNDERAGE' ? 'border-red-500 bg-red-500/20' :
+          status === 'UNDERAGE' || status === 'INVALID_SCAN' ? 'border-red-500 bg-red-500/20' :
           'border-gold/40 bg-zinc-800 animate-pulse'
         }`}>
           {status === 'SUCCESS' ? (
@@ -655,21 +868,6 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
         autoComplete="off"
         autoFocus
       />
-
-      {/* Debug info */}
-      {scanBuffer && (
-        <div className="mb-4 text-xs text-zinc-600 font-mono break-all max-w-md mx-auto">
-          Scan buffer: {scanBuffer.substring(0, 50)}...
-        </div>
-      )}
-
-      {/* Manual trigger for testing */}
-      <button
-        onClick={handleManualScan}
-        className="text-zinc-500 hover:text-gold transition-colors underline underline-offset-4 text-sm font-craft"
-      >
-        [ Test: Simulate Scan ]
-      </button>
     </div>
   );
 };
