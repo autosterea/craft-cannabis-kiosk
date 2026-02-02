@@ -105,7 +105,15 @@ export async function createCustomer(data: {
   firstName: string;
   lastName?: string;
   telephone: string;
+  email?: string;
   loyaltyOptIn: boolean;
+  // Demographics
+  address1?: string;
+  city?: string;
+  state?: string;
+  zipCode?: string;
+  dateOfBirth?: string;
+  gender?: 'M' | 'F' | 'X';
 }): Promise<KioskCustomer> {
   if (isElectron()) {
     return window.kiosk.createCustomer(data);
@@ -119,6 +127,14 @@ export async function createCustomer(data: {
 export async function updateCustomer(customerId: number, data: {
   loyaltyMember?: boolean;
   marketingOptIn?: boolean;
+  email?: string;
+  // Demographics
+  address1?: string;
+  city?: string;
+  state?: string;
+  zipCode?: string;
+  dateOfBirth?: string;
+  gender?: 'M' | 'F' | 'X';
 }): Promise<KioskCustomer> {
   if (isElectron()) {
     return window.kiosk.updateCustomer(customerId, data);

@@ -175,17 +175,43 @@ export class PosabitService {
     firstName: string;
     lastName?: string;
     telephone: string;
+    email?: string;
     loyaltyOptIn: boolean;
+    // Demographics
+    address1?: string;
+    city?: string;
+    state?: string;
+    zipCode?: string;
+    dateOfBirth?: string;
+    gender?: 'M' | 'F' | 'X';
   }): Promise<PosabitCustomer> {
-    const body = {
-      customer: {
-        first_name: data.firstName,
-        last_name: data.lastName || '',
-        telephone: data.telephone,
-        loyalty_member: data.loyaltyOptIn,
-        marketing_opt_in: data.loyaltyOptIn,
-      },
+    const customerData: any = {
+      first_name: data.firstName,
+      last_name: data.lastName || '',
+      telephone: data.telephone,
+      loyalty_member: data.loyaltyOptIn,
+      marketing_opt_in: data.loyaltyOptIn,
     };
+
+    // Add optional fields if provided
+    if (data.email) customerData.email = data.email;
+    if (data.address1) customerData.address_1 = data.address1;
+    if (data.city) customerData.city = data.city;
+    if (data.state) customerData.state = data.state;
+    if (data.zipCode) customerData.zip_code = data.zipCode;
+    if (data.dateOfBirth) {
+      // Convert MMDDYYYY to YYYY-MM-DD for API
+      const dob = data.dateOfBirth;
+      if (dob.length === 8) {
+        customerData.date_of_birth = `${dob.substring(4, 8)}-${dob.substring(0, 2)}-${dob.substring(2, 4)}`;
+      }
+    }
+    if (data.gender) {
+      // POSaBIT may use different values - adjust as needed
+      customerData.gender = data.gender === 'M' ? 'male' : data.gender === 'F' ? 'female' : 'other';
+    }
+
+    const body = { customer: customerData };
 
     const response = await fetch(`${BASE_URL}/venue/customers`, {
       method: 'POST',
@@ -213,6 +239,13 @@ export class PosabitService {
     lastName?: string;
     telephone?: string;
     email?: string;
+    // Demographics
+    address1?: string;
+    city?: string;
+    state?: string;
+    zipCode?: string;
+    dateOfBirth?: string;
+    gender?: 'M' | 'F' | 'X';
   }): Promise<PosabitCustomer> {
     const customerUpdate: any = {};
 
@@ -233,6 +266,29 @@ export class PosabitService {
     }
     if (data.email !== undefined) {
       customerUpdate.email = data.email;
+    }
+    // Demographics from DL scan
+    if (data.address1) {
+      customerUpdate.address_1 = data.address1;
+    }
+    if (data.city) {
+      customerUpdate.city = data.city;
+    }
+    if (data.state) {
+      customerUpdate.state = data.state;
+    }
+    if (data.zipCode) {
+      customerUpdate.zip_code = data.zipCode;
+    }
+    if (data.dateOfBirth) {
+      // Convert MMDDYYYY to YYYY-MM-DD for API
+      const dob = data.dateOfBirth;
+      if (dob.length === 8) {
+        customerUpdate.date_of_birth = `${dob.substring(4, 8)}-${dob.substring(0, 2)}-${dob.substring(2, 4)}`;
+      }
+    }
+    if (data.gender) {
+      customerUpdate.gender = data.gender === 'M' ? 'male' : data.gender === 'F' ? 'female' : 'other';
     }
 
     const body = { customer: customerUpdate };

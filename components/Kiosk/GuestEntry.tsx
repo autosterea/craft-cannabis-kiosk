@@ -1,21 +1,122 @@
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Customer } from '../../types';
-import { createCustomer, isElectron } from '../../services/kioskApi';
+import { createCustomer } from '../../services/kioskApi';
+import TouchKeyboard from './TouchKeyboard';
 
 interface GuestEntryProps {
   onComplete: (data: Partial<Customer>) => void;
 }
 
-type Step = 'NAME' | 'LOYALTY_PROMPT' | 'PHONE_ENTRY' | 'CREATING';
+interface ScannedDLData {
+  firstName: string;
+  lastName: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zipCode?: string;
+  dateOfBirth?: string;
+  gender?: 'M' | 'F' | 'X';
+}
+
+type Step = 'NAME' | 'LOYALTY_PROMPT' | 'DL_SCAN_OPTION' | 'DL_SCANNING' | 'PHONE_ENTRY' | 'EMAIL_ENTRY' | 'CREATING';
+
+// Parse driver's license barcode (simplified version)
+const parseDriversLicense = (scanData: string): ScannedDLData | null => {
+  try {
+    const fields: Record<string, string> = {};
+    const allFieldCodes = [
+      'DAA', 'DAB', 'DAC', 'DAD', 'DAE', 'DAF', 'DAG', 'DAH', 'DAI', 'DAJ', 'DAK', 'DAL', 'DAM', 'DAN', 'DAO', 'DAP', 'DAQ', 'DAR', 'DAS', 'DAT', 'DAU', 'DAV', 'DAW', 'DAX', 'DAY', 'DAZ',
+      'DBA', 'DBB', 'DBC', 'DBD', 'DBE', 'DBF', 'DBG', 'DBH', 'DBI', 'DBJ', 'DBK', 'DBL', 'DBM', 'DBN', 'DBO', 'DBP', 'DBQ', 'DBR', 'DBS',
+      'DCA', 'DCB', 'DCC', 'DCD', 'DCE', 'DCF', 'DCG', 'DCH', 'DCI', 'DCJ', 'DCK', 'DCL', 'DCM', 'DCN', 'DCO', 'DCP', 'DCQ', 'DCR', 'DCS', 'DCT', 'DCU',
+      'DDA', 'DDB', 'DDC', 'DDD', 'DDE', 'DDF', 'DDG', 'DDH', 'DDI', 'DDJ', 'DDK', 'DDL',
+      'DFN', 'DLN', 'DEN'
+    ];
+
+    const fieldCodeRegex = new RegExp(`(${allFieldCodes.join('|')})`, 'g');
+    const matches: { code: string; index: number }[] = [];
+    let match;
+    while ((match = fieldCodeRegex.exec(scanData)) !== null) {
+      matches.push({ code: match[1], index: match.index });
+    }
+
+    for (let i = 0; i < matches.length; i++) {
+      const { code, index } = matches[i];
+      const startPos = index + 3;
+      const endPos = i < matches.length - 1 ? matches[i + 1].index : scanData.length;
+      let value = scanData.substring(startPos, endPos);
+      value = value.replace(/[\x00-\x1F]/g, '').trim();
+      if (value && !fields[code]) {
+        fields[code] = value;
+      }
+    }
+
+    let firstName = fields['DAC'] || fields['DCT'] || fields['DFN'] || '';
+    let lastName = fields['DCS'] || fields['DLN'] || '';
+    const dateOfBirth = fields['DBB'] || '';
+    let address = fields['DAG'] || '';
+    let city = fields['DAI'] || '';
+    let state = fields['DAJ'] || '';
+    let zipCode = fields['DAK'] || '';
+
+    if (state.length > 2) state = state.substring(0, 2);
+    zipCode = zipCode.replace(/[^0-9]/g, '').substring(0, 5);
+
+    const genderCode = fields['DBC'] || '';
+    let gender: 'M' | 'F' | 'X' | undefined;
+    if (genderCode === '1') gender = 'M';
+    else if (genderCode === '2') gender = 'F';
+    else if (genderCode) gender = 'X';
+
+    firstName = firstName.replace(/[^A-Za-z\-' ]/g, '').trim();
+    lastName = lastName.replace(/[^A-Za-z\-' ]/g, '').trim();
+    if (firstName.includes(' ')) firstName = firstName.split(/\s+/)[0];
+    if (lastName.includes(' ')) lastName = lastName.split(/\s+/)[0];
+
+    if (!firstName) return null;
+
+    const properCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+
+    return {
+      firstName: properCase(firstName),
+      lastName: lastName ? properCase(lastName) : '',
+      address: address || undefined,
+      city: city ? properCase(city) : undefined,
+      state: state?.toUpperCase() || undefined,
+      zipCode: zipCode || undefined,
+      dateOfBirth: dateOfBirth || undefined,
+      gender,
+    };
+  } catch (e) {
+    return null;
+  }
+};
 
 const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
   const [step, setStep] = useState<Step>('NAME');
   const [name, setName] = useState('');
   const [initial, setInitial] = useState('');
   const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dlData, setDlData] = useState<ScannedDLData | null>(null);
+  const [scanBuffer, setScanBuffer] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+  const bufferTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Keep input focused for scanner when in DL_SCANNING step
+  useEffect(() => {
+    if (step === 'DL_SCANNING') {
+      inputRef.current?.focus();
+      const keepFocus = setInterval(() => {
+        if (document.activeElement !== inputRef.current) {
+          inputRef.current?.focus();
+        }
+      }, 500);
+      return () => clearInterval(keepFocus);
+    }
+  }, [step]);
 
   const formatPhoneDisplay = (val: string) => {
     if (!val) return '';
@@ -48,9 +149,9 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
     setStep('LOYALTY_PROMPT');
   };
 
-  // User wants to sign up for loyalty
+  // User wants to sign up for loyalty - show DL scan option
   const wantsLoyalty = () => {
-    setStep('PHONE_ENTRY');
+    setStep('DL_SCAN_OPTION');
   };
 
   // User doesn't want loyalty, just check in
@@ -58,9 +159,59 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
     submitAsGuest();
   };
 
-  // Submit with loyalty signup
-  const submitWithLoyalty = async () => {
+  // User wants to scan DL for demographics
+  const startDLScan = () => {
+    setScanBuffer('');
+    setStep('DL_SCANNING');
+  };
+
+  // User skips DL scan
+  const skipDLScan = () => {
+    setStep('PHONE_ENTRY');
+  };
+
+  // Handle DL scan input
+  const handleScanInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setScanBuffer(value);
+
+    if (bufferTimeoutRef.current) {
+      clearTimeout(bufferTimeoutRef.current);
+    }
+
+    bufferTimeoutRef.current = setTimeout(() => {
+      if (value.length > 50) {
+        processDLScan(value);
+      }
+    }, 100);
+  };
+
+  // Process the DL scan
+  const processDLScan = (scanData: string) => {
+    const parsed = parseDriversLicense(scanData);
+
+    if (parsed) {
+      setDlData(parsed);
+      // Update name from DL
+      setName(parsed.firstName);
+      setInitial(parsed.lastName?.[0]?.toUpperCase() || '');
+    }
+
+    // Move to phone entry regardless
+    setScanBuffer('');
+    if (inputRef.current) inputRef.current.value = '';
+    setStep('PHONE_ENTRY');
+  };
+
+  // Move to email entry after phone
+  const proceedToEmailEntry = () => {
     if (phone.length !== 10) return;
+    setStep('EMAIL_ENTRY');
+  };
+
+  // Submit with loyalty signup (after email entry)
+  const submitWithLoyalty = async () => {
+    if (phone.length !== 10 || !email) return;
 
     setStep('CREATING');
     setLoading(true);
@@ -72,10 +223,16 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
         firstName: name,
         lastName: initial || undefined,
         telephone: phone,
+        email: email,
         loyaltyOptIn: true,
+        // Include demographics if DL was scanned
+        address1: dlData?.address,
+        city: dlData?.city,
+        state: dlData?.state,
+        zipCode: dlData?.zipCode,
+        dateOfBirth: dlData?.dateOfBirth,
+        gender: dlData?.gender,
       });
-
-      console.log('Created new loyalty customer:', newCustomer);
 
       onComplete({
         name,
@@ -88,7 +245,7 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
     } catch (err) {
       console.error('Failed to create customer:', err);
       setError('Failed to sign up for loyalty. Please try again or continue as guest.');
-      setStep('PHONE_ENTRY');
+      setStep('EMAIL_ENTRY');
     } finally {
       setLoading(false);
     }
@@ -187,16 +344,101 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
     );
   }
 
+  // Step 2.5: DL Scan Option (for easier signup)
+  if (step === 'DL_SCAN_OPTION') {
+    return (
+      <div className="w-full max-w-xl bg-zinc-900/50 p-10 rounded-3xl border border-zinc-800 shadow-xl text-center">
+        <h2 className="text-3xl font-craft font-bold mb-4 text-gold uppercase tracking-wider">
+          Quick Signup
+        </h2>
+        <p className="text-zinc-400 mb-8">
+          Scan your ID to auto-fill your information, or enter manually
+        </p>
+
+        <div className="flex flex-col gap-4 mb-6">
+          <button
+            onClick={startDLScan}
+            className="w-full p-6 rounded-xl text-xl font-craft font-bold bg-gold text-black hover:bg-[#d8c19d] transition-all flex items-center justify-center gap-3"
+          >
+            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+            </svg>
+            Scan ID (Recommended)
+          </button>
+          <button
+            onClick={skipDLScan}
+            className="w-full p-6 rounded-xl text-xl font-craft bg-zinc-800 text-white hover:bg-zinc-700 transition-all"
+          >
+            Enter Manually
+          </button>
+        </div>
+
+        <button
+          onClick={() => setStep('LOYALTY_PROMPT')}
+          className="text-zinc-500 text-sm hover:text-zinc-300 transition-colors"
+        >
+          ← Back
+        </button>
+      </div>
+    );
+  }
+
+  // Step 2.6: DL Scanning
+  if (step === 'DL_SCANNING') {
+    return (
+      <div className="w-full max-w-xl bg-zinc-900/50 p-10 rounded-3xl border border-zinc-800 shadow-xl text-center">
+        <div className="mb-8">
+          <div className="w-48 h-64 border-4 border-dashed border-gold/60 rounded-2xl flex flex-col items-center justify-center mx-auto bg-zinc-800/50 animate-pulse">
+            <svg className="w-20 h-20 text-gold mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+            </svg>
+            <div className="h-1 bg-gold w-32 animate-bounce opacity-80"></div>
+          </div>
+        </div>
+
+        <h2 className="text-3xl font-craft font-bold mb-4 text-white uppercase tracking-wider">
+          Scan Your ID
+        </h2>
+        <p className="text-zinc-400 mb-8">
+          Place the barcode on the back of your ID under the scanner
+        </p>
+
+        {/* Hidden input for scanner */}
+        <input
+          ref={inputRef}
+          type="text"
+          className="opacity-0 absolute -left-[9999px]"
+          onChange={handleScanInput}
+          onBlur={() => inputRef.current?.focus()}
+          autoComplete="off"
+          autoFocus
+        />
+
+        <button
+          onClick={skipDLScan}
+          className="text-zinc-500 hover:text-zinc-300 transition-colors underline underline-offset-4"
+        >
+          Skip - Enter Manually Instead
+        </button>
+      </div>
+    );
+  }
+
   // Step 3: Phone Entry (for loyalty signup)
   if (step === 'PHONE_ENTRY') {
     return (
       <div className="w-full max-w-xl bg-zinc-900/50 p-10 rounded-3xl border border-zinc-800 shadow-xl text-center">
         <h2 className="text-3xl font-craft font-bold mb-4 text-gold uppercase tracking-wider">
-          Almost Done!
+          Step 1 of 2
         </h2>
-        <p className="text-zinc-400 mb-8">
-          Enter your phone number to complete your loyalty signup
+        <p className="text-zinc-400 mb-2">
+          Enter your phone number
         </p>
+        {dlData && (
+          <p className="text-green-400 text-sm mb-6">
+            ✓ ID scanned - {dlData.firstName} {dlData.lastName?.[0] || ''}.
+          </p>
+        )}
 
         {error && (
           <div className="mb-6 p-4 bg-red-900/50 border border-red-700 rounded-xl text-red-300 text-sm">
@@ -226,20 +468,20 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
             Skip
           </button>
           <button
-            onClick={submitWithLoyalty}
-            disabled={phone.length !== 10 || loading}
+            onClick={proceedToEmailEntry}
+            disabled={phone.length !== 10}
             className={`flex-1 p-6 rounded-xl text-xl font-craft font-bold transition-all ${
-              phone.length === 10 && !loading
+              phone.length === 10
                 ? 'bg-gold text-black hover:bg-[#d8c19d]'
                 : 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
             }`}
           >
-            {loading ? 'Signing Up...' : 'Complete Signup'}
+            Next →
           </button>
         </div>
 
         <button
-          onClick={() => setStep('LOYALTY_PROMPT')}
+          onClick={() => { setStep('DL_SCAN_OPTION'); setDlData(null); }}
           className="text-zinc-500 text-sm hover:text-zinc-300 transition-colors"
         >
           ← Back
@@ -248,7 +490,42 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
     );
   }
 
-  // Step 4: Creating customer
+  // Step 4: Email Entry (for loyalty signup)
+  if (step === 'EMAIL_ENTRY') {
+    return (
+      <div className="w-full max-w-2xl bg-zinc-900/50 p-10 rounded-3xl border border-zinc-800 shadow-xl text-center">
+        <h2 className="text-3xl font-craft font-bold mb-2 text-gold uppercase tracking-wider">
+          Step 2 of 2
+        </h2>
+        <p className="text-zinc-400 mb-6">
+          Enter your email to complete signup
+        </p>
+
+        {error && (
+          <div className="mb-6 p-4 bg-red-900/50 border border-red-700 rounded-xl text-red-300 text-sm">
+            {error}
+          </div>
+        )}
+
+        <TouchKeyboard
+          value={email}
+          onChange={setEmail}
+          onSubmit={submitWithLoyalty}
+          placeholder="your@email.com"
+          type="email"
+        />
+
+        <button
+          onClick={() => { setStep('PHONE_ENTRY'); setError(null); }}
+          className="mt-6 text-zinc-500 text-sm hover:text-zinc-300 transition-colors"
+        >
+          ← Back to phone
+        </button>
+      </div>
+    );
+  }
+
+  // Step 5: Creating customer
   if (step === 'CREATING') {
     return (
       <div className="w-full max-w-xl bg-zinc-900/50 p-10 rounded-3xl border border-zinc-800 shadow-xl text-center">
