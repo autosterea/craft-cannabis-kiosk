@@ -97,13 +97,25 @@ export function getCustomerByPhone(phone: string, venueId: string): DbCustomer |
 
   const normalizedPhone = normalizePhone(phone);
 
-  const stmt = db.prepare(`
+  // Try exact match on normalized phone first
+  const exactStmt = db.prepare(`
     SELECT * FROM customers
-    WHERE telephone LIKE ? AND venue_id = ?
+    WHERE telephone = ? AND venue_id = ?
     LIMIT 1
   `);
 
-  const result = stmt.get(`%${normalizedPhone}`, venueId) as DbCustomer | undefined;
+  let result = exactStmt.get(normalizedPhone, venueId) as DbCustomer | undefined;
+
+  // Fallback: try LIKE match for phones stored in different formats (e.g. with country code)
+  if (!result) {
+    const likeStmt = db.prepare(`
+      SELECT * FROM customers
+      WHERE telephone LIKE ? AND venue_id = ?
+      LIMIT 1
+    `);
+    result = likeStmt.get(`%${normalizedPhone}`, venueId) as DbCustomer | undefined;
+  }
+
   return result || null;
 }
 
@@ -120,11 +132,15 @@ export function upsertCustomers(customers: any[], venueId: string): number {
 
   const insertMany = db.transaction((items: any[]) => {
     for (const customer of items) {
+      // Normalize phone on insert for consistent lookups
+      const rawPhone = customer.telephone || null;
+      const normalizedTelephone = rawPhone ? normalizePhone(rawPhone) : null;
+
       stmt.run(
         customer.id,
         customer.first_name || '',
         customer.last_name || '',
-        customer.telephone || null,
+        normalizedTelephone,
         customer.email || null,
         customer.loyalty_member ? 1 : 0,
         venueId,

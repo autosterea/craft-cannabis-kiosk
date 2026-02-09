@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Customer } from '../../types';
-import { createCustomer } from '../../services/kioskApi';
+import { createCustomer, lookupCustomer, updateCustomer } from '../../services/kioskApi';
 import TouchKeyboard from './TouchKeyboard';
 
 interface GuestEntryProps {
@@ -101,6 +101,7 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dlData, setDlData] = useState<ScannedDLData | null>(null);
+  const [existingCustomerId, setExistingCustomerId] = useState<number | null>(null);
   const [scanBuffer, setScanBuffer] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const bufferTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -203,10 +204,30 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
     setStep('PHONE_ENTRY');
   };
 
-  // Move to email entry after phone
-  const proceedToEmailEntry = () => {
+  // Move to email entry after phone - but check for existing customer first
+  const proceedToEmailEntry = async () => {
     if (phone.length !== 10) return;
-    setStep('EMAIL_ENTRY');
+    setLoading(true);
+    setError(null);
+
+    try {
+      const result = await lookupCustomer(phone);
+      if (result.found && result.customer) {
+        // Customer already exists - update them with loyalty + email instead of creating duplicate
+        setStep('EMAIL_ENTRY');
+        // Store existing customer id so submitWithLoyalty can update instead of create
+        setExistingCustomerId(result.customer.id);
+      } else {
+        setStep('EMAIL_ENTRY');
+        setExistingCustomerId(null);
+      }
+    } catch (err) {
+      console.error('Phone lookup failed:', err);
+      setStep('EMAIL_ENTRY');
+      setExistingCustomerId(null);
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Submit with loyalty signup (after email entry)
@@ -218,35 +239,67 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
     setError(null);
 
     try {
-      // Create customer in POSaBIT with loyalty enabled
-      const newCustomer = await createCustomer({
-        firstName: name,
-        lastName: initial || undefined,
-        telephone: phone,
-        email: email,
-        loyaltyOptIn: true,
-        // Include demographics if DL was scanned
-        address1: dlData?.address,
-        city: dlData?.city,
-        state: dlData?.state,
-        zipCode: dlData?.zipCode,
-        dateOfBirth: dlData?.dateOfBirth,
-        gender: dlData?.gender,
-      });
+      let customerId: number;
 
-      onComplete({
+      if (existingCustomerId) {
+        // Customer already exists - update with loyalty + email instead of creating duplicate
+        await updateCustomer(existingCustomerId, {
+          loyaltyMember: true,
+          marketingOptIn: true,
+          email: email,
+          address1: dlData?.address,
+          city: dlData?.city,
+          state: dlData?.state,
+          zipCode: dlData?.zipCode,
+          dateOfBirth: dlData?.dateOfBirth,
+          gender: dlData?.gender,
+        });
+        customerId = existingCustomerId;
+      } else {
+        // New customer - create in POSaBIT with loyalty enabled
+        const newCustomer = await createCustomer({
+          firstName: name,
+          lastName: initial || undefined,
+          telephone: phone,
+          email: email,
+          loyaltyOptIn: true,
+          address1: dlData?.address,
+          city: dlData?.city,
+          state: dlData?.state,
+          zipCode: dlData?.zipCode,
+          dateOfBirth: dlData?.dateOfBirth,
+          gender: dlData?.gender,
+        });
+        customerId = newCustomer.id;
+      }
+
+      // Capture data before resetting state
+      const completionData = {
         name,
         lastNameInitial: initial || '',
-        method: 'GUEST',
+        method: 'GUEST' as const,
         phone: phone,
-        loyaltyStatus: 'Member',
-        customerId: newCustomer.id,
-      });
+        loyaltyStatus: 'Member' as const,
+        customerId,
+      };
+
+      // Reset GuestEntry state BEFORE calling onComplete to prevent hang
+      setStep('NAME');
+      setName('');
+      setInitial('');
+      setPhone('');
+      setEmail('');
+      setError(null);
+      setDlData(null);
+      setExistingCustomerId(null);
+      setLoading(false);
+
+      onComplete(completionData);
+      return; // Skip the finally block's setLoading since we already did it
     } catch (err) {
-      console.error('Failed to create customer:', err);
+      console.error('Failed to create/update customer:', err);
       setError('Failed to sign up for loyalty. Please try again or continue as guest.');
       setStep('EMAIL_ENTRY');
-    } finally {
       setLoading(false);
     }
   };
@@ -410,6 +463,7 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
           className="opacity-0 absolute -left-[9999px]"
           onChange={handleScanInput}
           onBlur={() => inputRef.current?.focus()}
+          onKeyDown={(e) => { if (e.altKey || (e.ctrlKey && e.key === 'm')) e.preventDefault(); }}
           autoComplete="off"
           autoFocus
         />

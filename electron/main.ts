@@ -101,6 +101,20 @@ function createWindow() {
     },
   });
 
+  // Prevent barcode scanner control characters from triggering OS shortcuts (Alt+Space = minimize)
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.alt || (input.control && input.key === 'm')) {
+      event.preventDefault();
+    }
+  });
+
+  // Prevent window from being minimized when in kiosk mode
+  if (kioskMode) {
+    (mainWindow as any).on('minimize', () => {
+      mainWindow?.restore();
+    });
+  }
+
   if (isDev) {
     mainWindow.loadURL('http://localhost:3001');
     mainWindow.webContents.openDevTools();
@@ -183,7 +197,17 @@ function setupIpcHandlers() {
   // Create customer in POSaBIT
   ipcMain.handle('create-customer', async (_event, data: any) => {
     if (!posabitService) throw new Error('No venue selected');
-    return posabitService.createCustomer(data);
+    const venueId = store.get('selectedVenue') as string;
+
+    const newCustomer = await posabitService.createCustomer(data);
+
+    // Sync newly created customer to local database so email and other fields persist
+    if (venueId) {
+      upsertCustomers([newCustomer], venueId);
+      console.log('New customer synced to local DB:', newCustomer.id);
+    }
+
+    return newCustomer;
   });
 
   // Update customer in POSaBIT (e.g., to enable loyalty)
