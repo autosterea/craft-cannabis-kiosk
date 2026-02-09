@@ -613,6 +613,7 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
           type="text"
           className="opacity-0 absolute -left-[9999px]"
           onChange={handleScanInput}
+          onKeyDown={(e) => { if (e.altKey || (e.ctrlKey && e.key === 'm')) e.preventDefault(); }}
           autoComplete="off"
         />
       </div>
@@ -672,6 +673,7 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
           type="text"
           className="opacity-0 absolute -left-[9999px]"
           onChange={handleScanInput}
+          onKeyDown={(e) => { if (e.altKey || (e.ctrlKey && e.key === 'm')) e.preventDefault(); }}
           autoComplete="off"
         />
       </div>
@@ -784,6 +786,7 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
           type="text"
           className="opacity-0 absolute -left-[9999px]"
           onChange={handleScanInput}
+          onKeyDown={(e) => { if (e.altKey || (e.ctrlKey && e.key === 'm')) e.preventDefault(); }}
           autoComplete="off"
         />
       </div>
@@ -865,6 +868,7 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
         className="opacity-0 absolute -left-[9999px]"
         onChange={handleScanInput}
         onBlur={() => inputRef.current?.focus()}
+        onKeyDown={(e) => { if (e.altKey || (e.ctrlKey && e.key === 'm')) e.preventDefault(); }}
         autoComplete="off"
         autoFocus
       />

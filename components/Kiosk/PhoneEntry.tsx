@@ -23,6 +23,7 @@ const PhoneEntry: React.FC<PhoneEntryProps> = ({ onComplete }) => {
   };
 
   const clear = () => setPhone('');
+  const backspace = () => setPhone(prev => prev.slice(0, -1));
 
   const submitPhone = async () => {
     if (phone.length < 10) return;
@@ -144,8 +145,8 @@ const PhoneEntry: React.FC<PhoneEntryProps> = ({ onComplete }) => {
     confirmFoundCustomer();
   };
 
-  // Found customer state - loyalty member
-  if (step === 'FOUND' && foundCustomer && foundCustomer.loyalty_member) {
+  // Found customer state - any existing customer (just check them in, no loyalty prompt)
+  if (step === 'FOUND' && foundCustomer) {
     return (
       <div className="w-full max-w-xl bg-zinc-900/50 p-10 rounded-3xl border border-zinc-800 shadow-xl text-center">
         <div className="text-6xl mb-6">👋</div>
@@ -155,9 +156,11 @@ const PhoneEntry: React.FC<PhoneEntryProps> = ({ onComplete }) => {
         <p className="text-2xl text-white mb-2">
           {foundCustomer.first_name} {foundCustomer.last_name?.[0] || ''}.
         </p>
-        <p className="text-gold mb-8">Loyalty Member</p>
+        {foundCustomer.loyalty_member && (
+          <p className="text-gold mb-4">Loyalty Member</p>
+        )}
 
-        <div className="flex gap-4">
+        <div className="flex gap-4 mt-8">
           <button
             onClick={() => { setStep('NAME'); setFoundCustomer(null); }}
             className="flex-1 p-6 rounded-xl text-xl font-craft bg-zinc-800 text-white hover:bg-zinc-700 transition-all"
@@ -171,46 +174,6 @@ const PhoneEntry: React.FC<PhoneEntryProps> = ({ onComplete }) => {
             Check In
           </button>
         </div>
-      </div>
-    );
-  }
-
-  // Found customer state - NOT a loyalty member (show loyalty prompt)
-  if (step === 'FOUND' && foundCustomer && !foundCustomer.loyalty_member) {
-    return (
-      <div className="w-full max-w-xl bg-zinc-900/50 p-10 rounded-3xl border border-zinc-800 shadow-xl text-center">
-        <div className="text-6xl mb-6">🎁</div>
-        <h2 className="text-3xl font-craft font-bold mb-4 text-gold uppercase tracking-wider">
-          Welcome Back, {foundCustomer.first_name}!
-        </h2>
-        <p className="text-xl text-white mb-2">
-          Would you like to join our <span className="text-gold font-bold">Loyalty Program</span>?
-        </p>
-        <p className="text-zinc-400 mb-8 text-sm">
-          Earn points on every purchase and get exclusive rewards!
-        </p>
-
-        <div className="flex gap-4 mb-4">
-          <button
-            onClick={skipLoyalty}
-            className="flex-1 p-6 rounded-xl text-xl font-craft bg-zinc-800 text-white hover:bg-zinc-700 transition-all"
-          >
-            No Thanks
-          </button>
-          <button
-            onClick={handleLoyaltySignup}
-            className="flex-1 p-6 rounded-xl text-xl font-craft font-bold bg-gold text-black hover:bg-[#d8c19d] transition-all"
-          >
-            Yes, Sign Me Up!
-          </button>
-        </div>
-
-        <button
-          onClick={() => { setStep('NAME'); setFoundCustomer(null); }}
-          className="text-zinc-500 text-sm hover:text-zinc-300 transition-colors"
-        >
-          Not {foundCustomer.first_name}? Click here
-        </button>
       </div>
     );
   }
@@ -306,19 +269,22 @@ const PhoneEntry: React.FC<PhoneEntryProps> = ({ onComplete }) => {
       </div>
 
       <div className="grid grid-cols-3 gap-4 mb-10">
-        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 'Clear', 0, 'Go'].map((key) => (
+        {[1, 2, 3, 4, 5, 6, 7, 8, 9, '←', 0, 'Go'].map((key) => (
           <button
             key={key}
             onClick={() => {
-              if (key === 'Clear') clear();
+              if (key === '←') backspace();
               else if (key === 'Go') submitPhone();
               else append(key.toString());
+            }}
+            onDoubleClick={() => {
+              if (key === '←') clear();
             }}
             disabled={loading}
             className={`
               h-20 text-3xl font-craft flex items-center justify-center rounded-xl transition-all active:scale-95
               ${key === 'Go' ? 'bg-gold text-black col-span-1 font-bold' : 'bg-zinc-800 text-white hover:bg-zinc-700'}
-              ${key === 'Clear' ? 'bg-zinc-700 text-zinc-300' : ''}
+              ${key === '←' ? 'bg-zinc-700 text-zinc-300' : ''}
               ${loading ? 'opacity-50 cursor-not-allowed' : ''}
             `}
           >
