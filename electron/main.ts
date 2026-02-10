@@ -13,11 +13,36 @@ import { PosabitService } from './services/posabit.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Default blocked words list
+const DEFAULT_BLOCKED_WORDS: string[] = [
+  // General profanity
+  'ass', 'asshole', 'bastard', 'bitch', 'bullshit', 'cock', 'cunt',
+  'damn', 'dick', 'douche', 'fuck', 'fucker', 'fucked', 'fucking',
+  'goddamn', 'motherfucker', 'piss', 'prick', 'pussy', 'shit',
+  'slut', 'twat', 'whore',
+  // F-word variations
+  'fboy', 'fboi', 'fuk', 'fck', 'stfu', 'wtf', 'af',
+  // Violence
+  'shoot', 'shooter', 'shot', 'kill', 'bomb', 'isis',
+  // Hate speech / slurs
+  'nigga', 'nigger', 'faggot', 'fag', 'retard', 'retarded',
+  'gay', 'lesbian', 'dyke', 'tranny',
+  // Political trolling
+  'maga', 'magatt', 'magatard', 'snowflake', 'libtard', 'ice',
+  // Sexual / inappropriate
+  'daddy', 'sugarbaby', 'milf', 'dilf', 'boobs', 'tits', 'penis',
+  'vagina', 'sexy', 'horny', 'hoe', 'thot',
+  // Meme / troll names
+  'deez', 'ligma', 'sugma', 'bofa', 'problem', 'police',
+  'yourmom', 'urmom',
+];
+
 // Store schema type
 interface StoreSchema {
   selectedVenue: string | null;
   lastSyncTime: string | null;
   kioskMode: boolean;
+  blockedWords: string[];
 }
 
 // Persistent settings store
@@ -25,9 +50,16 @@ const store = new Store<StoreSchema>({
   defaults: {
     selectedVenue: null,
     lastSyncTime: null,
-    kioskMode: false
+    kioskMode: false,
+    blockedWords: DEFAULT_BLOCKED_WORDS,
   }
 });
+
+// Reset blocked words to new defaults if the stored list is the old short list
+const storedWords = store.get('blockedWords') as string[];
+if (!storedWords || storedWords.length < DEFAULT_BLOCKED_WORDS.length) {
+  store.set('blockedWords', DEFAULT_BLOCKED_WORDS);
+}
 
 let mainWindow: BrowserWindow | null = null;
 let syncService: SyncService | null = null;
@@ -277,6 +309,14 @@ function setupIpcHandlers() {
   });
 
   ipcMain.handle('get-kiosk-mode', () => store.get('kioskMode'));
+
+  // Blocked words
+  ipcMain.handle('get-blocked-words', () => store.get('blockedWords'));
+
+  ipcMain.handle('set-blocked-words', (_event, words: string[]) => {
+    store.set('blockedWords', words);
+    return words;
+  });
 
   // Auto-update handlers
   ipcMain.handle('check-for-updates', async () => {

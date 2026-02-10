@@ -105,8 +105,22 @@ declare global {
       forceSync: () => Promise<{ success: boolean }>;
       setKioskMode: (enabled: boolean) => Promise<boolean>;
       getKioskMode: () => Promise<boolean>;
+      getBlockedWords: () => Promise<string[]>;
+      setBlockedWords: (words: string[]) => Promise<string[]>;
       onSyncProgress: (callback: (progress: { current: number; total: number }) => void) => () => void;
       onSyncComplete: (callback: () => void) => () => void;
+      // Debug/Admin
+      debugSearchGlobal: (phone: string) => Promise<any>;
+      debugDbInfo: () => Promise<any>;
+      // Auto-update
+      lookupCustomerByName: (firstName: string, lastName: string) => Promise<{ found: boolean; customer?: KioskCustomer }>;
+      updateCustomer: (customerId: number, data: any) => Promise<KioskCustomer>;
+      checkForUpdates: () => Promise<any>;
+      installUpdate: () => Promise<void>;
+      getAppVersion: () => Promise<string>;
+      onUpdateAvailable: (callback: (info: any) => void) => () => void;
+      onUpdateProgress: (callback: (progress: any) => void) => () => void;
+      onUpdateDownloaded: (callback: (info: any) => void) => () => void;
     };
   }
 }

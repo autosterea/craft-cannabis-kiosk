@@ -26,6 +26,10 @@ contextBridge.exposeInMainWorld('kiosk', {
   setKioskMode: (enabled) => ipcRenderer.invoke('set-kiosk-mode', enabled),
   getKioskMode: () => ipcRenderer.invoke('get-kiosk-mode'),
 
+  // Blocked words
+  getBlockedWords: () => ipcRenderer.invoke('get-blocked-words'),
+  setBlockedWords: (words) => ipcRenderer.invoke('set-blocked-words', words),
+
   // Event listeners for sync progress
   onSyncProgress: (callback) => {
     const handler = (_event, progress) => callback(progress);

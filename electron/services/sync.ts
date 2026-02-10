@@ -5,11 +5,12 @@ import Store from 'electron-store';
 import { PosabitService } from './posabit.js';
 import { upsertCustomers, getCustomerCount, getUnsyncedEntries, markEntrySynced } from './database.js';
 
-// Store schema type
+// Store schema type (must match main.ts StoreSchema)
 interface StoreSchema {
   selectedVenue: string | null;
   lastSyncTime: string | null;
   kioskMode: boolean;
+  blockedWords: string[];
 }
 
 export class SyncService {

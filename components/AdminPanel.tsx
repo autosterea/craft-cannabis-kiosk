@@ -9,6 +9,8 @@ import {
   lookupCustomer,
   setKioskMode,
   getKioskMode,
+  getBlockedWords,
+  setBlockedWords,
   Venue,
   KioskCustomer
 } from '../services/kioskApi';
@@ -52,6 +54,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
   // Kiosk mode
   const [kioskModeEnabled, setKioskModeEnabled] = useState(false);
 
+  // Blocked words
+  const [blockedWords, setBlockedWordsState] = useState<string[]>([]);
+  const [newWord, setNewWord] = useState('');
+
   // Load data on mount
   useEffect(() => {
     loadData();
@@ -69,7 +75,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
       setCurrentVenue(venue);
       setSyncStatus(status);
 
-      // Load debug info and kiosk mode if in Electron
+      // Load debug info, kiosk mode, and blocked words if in Electron
       if (isElectron()) {
         if (window.kiosk?.debugDbInfo) {
           const info = await window.kiosk.debugDbInfo();
@@ -77,6 +83,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
         }
         const kioskMode = await getKioskMode();
         setKioskModeEnabled(kioskMode);
+        const words = await getBlockedWords();
+        setBlockedWordsState(words);
       }
     } catch (err) {
       console.error('Failed to load admin data:', err);
@@ -115,6 +123,24 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
     const newValue = !kioskModeEnabled;
     await setKioskMode(newValue);
     setKioskModeEnabled(newValue);
+  };
+
+  const handleAddBlockedWord = async () => {
+    const word = newWord.trim().toLowerCase();
+    if (!word || blockedWords.includes(word)) {
+      setNewWord('');
+      return;
+    }
+    const updated = [...blockedWords, word].sort();
+    setBlockedWordsState(updated);
+    await setBlockedWords(updated);
+    setNewWord('');
+  };
+
+  const handleRemoveBlockedWord = async (word: string) => {
+    const updated = blockedWords.filter(w => w !== word);
+    setBlockedWordsState(updated);
+    await setBlockedWords(updated);
   };
 
   const handleSearch = async () => {
@@ -278,6 +304,61 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
                 Press F11 or Alt+F4 to exit kiosk mode if needed
               </p>
             )}
+          </div>
+        )}
+
+        {/* Blocked Words */}
+        {isElectron() && (
+          <div className="bg-zinc-900/50 p-6 rounded-2xl border border-zinc-800 mb-6">
+            <h2 className="text-xl font-craft text-gold mb-4">
+              Blocked Words
+              <span className="text-zinc-500 text-sm font-normal ml-2">({blockedWords.length} words)</span>
+            </h2>
+            <p className="text-zinc-400 text-sm mb-4">
+              Names containing these words will be rejected at check-in.
+            </p>
+
+            <div className="flex gap-3 mb-4">
+              <input
+                type="text"
+                value={newWord}
+                onChange={(e) => setNewWord(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleAddBlockedWord(); }}
+                placeholder="Add a word..."
+                className="flex-1 bg-zinc-800 text-white p-3 rounded-lg border border-zinc-700 focus:border-gold outline-none"
+              />
+              <button
+                onClick={handleAddBlockedWord}
+                disabled={!newWord.trim()}
+                className={`px-6 py-3 rounded-lg font-craft font-bold transition-all ${
+                  newWord.trim()
+                    ? 'bg-gold text-black hover:bg-[#d8c19d]'
+                    : 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+                }`}
+              >
+                Add
+              </button>
+            </div>
+
+            <div className="flex flex-wrap gap-2 max-h-48 overflow-y-auto">
+              {blockedWords.map((word) => (
+                <span
+                  key={word}
+                  className="inline-flex items-center gap-1 bg-zinc-800 text-zinc-300 px-3 py-1.5 rounded-full text-sm border border-zinc-700"
+                >
+                  {word}
+                  <button
+                    onClick={() => handleRemoveBlockedWord(word)}
+                    className="ml-1 text-zinc-500 hover:text-red-400 transition-colors text-lg leading-none"
+                  >
+                    &times;
+                  </button>
+                </span>
+              ))}
+              {blockedWords.length === 0 && (
+                <p className="text-zinc-600 text-sm italic">No blocked words configured.</p>
+              )}
+            </div>
           </div>
         )}
 

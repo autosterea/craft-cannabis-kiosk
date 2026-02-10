@@ -1,7 +1,7 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Customer } from '../../types';
-import { lookupCustomer, updateCustomer, KioskCustomer } from '../../services/kioskApi';
+import { lookupCustomer, updateCustomer, KioskCustomer, getBlockedWords, isNameBlocked } from '../../services/kioskApi';
 import TouchKeyboard from './TouchKeyboard';
 
 interface PhoneEntryProps {
@@ -17,6 +17,18 @@ const PhoneEntry: React.FC<PhoneEntryProps> = ({ onComplete }) => {
   const [step, setStep] = useState<Step>('PHONE');
   const [foundCustomer, setFoundCustomer] = useState<KioskCustomer | null>(null);
   const [loading, setLoading] = useState(false);
+  const [blockedWords, setBlockedWords] = useState<string[]>([]);
+  const [nameBlocked, setNameBlocked] = useState(false);
+
+  // Load blocked words on mount
+  useEffect(() => {
+    getBlockedWords().then(setBlockedWords).catch(() => {});
+  }, []);
+
+  // Validate name against blocked words
+  useEffect(() => {
+    setNameBlocked(name.trim() ? isNameBlocked(name, blockedWords) : false);
+  }, [name, blockedWords]);
 
   const append = (digit: string) => {
     if (phone.length < 10) setPhone(prev => prev + digit);
@@ -228,14 +240,21 @@ const PhoneEntry: React.FC<PhoneEntryProps> = ({ onComplete }) => {
         <p className="text-zinc-400 mb-2">We didn't find your phone number in our system.</p>
         <p className="text-zinc-500 text-sm mb-8">Phone: {formatPhone(phone)}</p>
 
-        <input
-          type="text"
-          placeholder="First Last"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="w-full bg-black/50 border-2 border-zinc-800 rounded-2xl p-6 text-2xl text-white placeholder:text-zinc-700 focus:border-gold outline-none mb-8 text-center"
-          autoFocus
-        />
+        <div className="mb-8">
+          <input
+            type="text"
+            placeholder="First Last"
+            value={name}
+            onChange={(e) => setName(e.target.value.replace(/[^a-zA-Z\s'-]/g, ''))}
+            className={`w-full bg-black/50 border-2 rounded-2xl p-6 text-2xl text-white placeholder:text-zinc-700 outline-none text-center ${
+              nameBlocked ? 'border-red-500 focus:border-red-500' : 'border-zinc-800 focus:border-gold'
+            }`}
+            autoFocus
+          />
+          {nameBlocked && (
+            <p className="text-red-400 text-sm mt-2">Please use your real name</p>
+          )}
+        </div>
 
         <div className="flex gap-4">
           <button
@@ -246,9 +265,9 @@ const PhoneEntry: React.FC<PhoneEntryProps> = ({ onComplete }) => {
           </button>
           <button
             onClick={submitName}
-            disabled={!name.trim() || loading}
+            disabled={!name.trim() || loading || nameBlocked}
             className={`flex-1 p-6 rounded-xl text-xl font-craft font-bold transition-all ${
-              name.trim() && !loading ? 'bg-gold text-black hover:bg-[#d8c19d]' : 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+              name.trim() && !loading && !nameBlocked ? 'bg-gold text-black hover:bg-[#d8c19d]' : 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
             }`}
           >
             {loading ? 'Adding...' : 'Join Queue'}

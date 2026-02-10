@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Customer } from '../../types';
-import { createCustomer, lookupCustomer, updateCustomer } from '../../services/kioskApi';
+import { createCustomer, lookupCustomer, updateCustomer, getBlockedWords, isNameBlocked } from '../../services/kioskApi';
 import TouchKeyboard from './TouchKeyboard';
 
 interface GuestEntryProps {
@@ -103,8 +103,20 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
   const [dlData, setDlData] = useState<ScannedDLData | null>(null);
   const [existingCustomerId, setExistingCustomerId] = useState<number | null>(null);
   const [scanBuffer, setScanBuffer] = useState('');
+  const [blockedWords, setBlockedWords] = useState<string[]>([]);
+  const [nameBlocked, setNameBlocked] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const bufferTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Load blocked words on mount
+  useEffect(() => {
+    getBlockedWords().then(setBlockedWords).catch(() => {});
+  }, []);
+
+  // Validate name against blocked words whenever name changes
+  useEffect(() => {
+    setNameBlocked(name.trim() ? isNameBlocked(name, blockedWords) : false);
+  }, [name, blockedWords]);
 
   // Keep input focused for scanner when in DL_SCANNING step
   useEffect(() => {
@@ -321,10 +333,15 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
               type="text"
               placeholder="Ex: David"
               value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full bg-black/40 border-2 border-zinc-800 rounded-2xl p-5 text-xl text-white placeholder:text-zinc-700 focus:border-gold outline-none transition-all"
+              onChange={(e) => setName(e.target.value.replace(/[^a-zA-Z\s'-]/g, ''))}
+              className={`w-full bg-black/40 border-2 rounded-2xl p-5 text-xl text-white placeholder:text-zinc-700 outline-none transition-all ${
+                nameBlocked ? 'border-red-500 focus:border-red-500' : 'border-zinc-800 focus:border-gold'
+              }`}
               autoFocus
             />
+            {nameBlocked && (
+              <p className="text-red-400 text-sm mt-2 ml-4">Please use your real name</p>
+            )}
           </div>
 
           {/* Last Initial */}
@@ -337,7 +354,7 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
               placeholder="Ex: S"
               maxLength={1}
               value={initial}
-              onChange={(e) => setInitial(e.target.value.toUpperCase())}
+              onChange={(e) => setInitial(e.target.value.replace(/[^a-zA-Z]/g, '').toUpperCase())}
               className="w-24 bg-black/40 border-2 border-zinc-800 rounded-2xl p-5 text-xl text-white placeholder:text-zinc-700 focus:border-gold outline-none text-center transition-all"
             />
           </div>
@@ -345,10 +362,10 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
 
         <button
           onClick={proceedToLoyaltyPrompt}
-          disabled={!name}
+          disabled={!name || nameBlocked}
           className={`
             w-full p-7 rounded-2xl text-2xl font-craft font-bold transition-all active:scale-95
-            ${name ? 'bg-gold text-black hover:bg-[#d8c19d]' : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'}
+            ${name && !nameBlocked ? 'bg-gold text-black hover:bg-[#d8c19d]' : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'}
           `}
         >
           Continue
@@ -361,16 +378,27 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
   if (step === 'LOYALTY_PROMPT') {
     return (
       <div className="w-full max-w-xl bg-zinc-900/50 p-10 rounded-3xl border border-zinc-800 shadow-xl text-center">
-        <div className="text-6xl mb-6">🎁</div>
-        <h2 className="text-3xl font-craft font-bold mb-4 text-gold uppercase tracking-wider">
+        <h2 className="text-3xl font-craft font-bold mb-2 text-gold uppercase tracking-wider">
           Hi {name}!
         </h2>
-        <p className="text-xl text-white mb-2">
-          Would you like to join our <span className="text-gold font-bold">Loyalty Program</span>?
+        <p className="text-xl text-white mb-6">
+          Join <span className="text-gold font-bold">Craft Rewards</span> — it's free
         </p>
-        <p className="text-zinc-400 mb-8 text-sm">
-          Earn points on every purchase and get exclusive rewards!
-        </p>
+
+        <div className="text-left space-y-3 mb-8 px-4">
+          <div className="flex items-center gap-3">
+            <span className="text-gold text-lg">%</span>
+            <span className="text-white">Member-only discounts</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-gold text-lg">★</span>
+            <span className="text-white">Early access to new products</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-gold text-lg">+</span>
+            <span className="text-white">Earn points on every purchase</span>
+          </div>
+        </div>
 
         <div className="flex gap-4 mb-4">
           <button
@@ -383,7 +411,7 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
             onClick={wantsLoyalty}
             className="flex-1 p-6 rounded-xl text-xl font-craft font-bold bg-gold text-black hover:bg-[#d8c19d] transition-all"
           >
-            Yes, Sign Me Up!
+            Sign Me Up
           </button>
         </div>
 
@@ -549,10 +577,13 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
     return (
       <div className="w-full max-w-2xl bg-zinc-900/50 p-10 rounded-3xl border border-zinc-800 shadow-xl text-center">
         <h2 className="text-3xl font-craft font-bold mb-2 text-gold uppercase tracking-wider">
-          Step 2 of 2
+          Almost Done
         </h2>
-        <p className="text-zinc-400 mb-6">
+        <p className="text-zinc-400 mb-1">
           Enter your email to complete signup
+        </p>
+        <p className="text-gold text-sm mb-6">
+          This is where we'll send your discounts and rewards
         </p>
 
         {error && (

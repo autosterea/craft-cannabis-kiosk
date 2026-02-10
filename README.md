@@ -1,113 +1,211 @@
 # Craft Cannabis Kiosk
 
-A Windows desktop check-in kiosk application for Craft Cannabis dispensaries, integrated with POSaBIT POS system.
+Windows desktop application for customer check-in at Craft Cannabis retail locations. Built with Electron, React, and SQLite.
 
 ## Features
 
-### Customer Check-In Methods
-1. **Phone Number Lookup** - Enter 10-digit phone to find existing customer
-2. **ID Scan (Driver's License)** - Scan PDF417 barcode on back of DL
-   - Extracts: First Name, Last Name, DOB, DL Number
-   - **Age Verification**: Automatically checks if 21+ and blocks underage
-   - Looks up customer by name in local database
-3. **Guest Entry** - Quick check-in without lookup
+- **Multi-venue support** - All 6 Craft Cannabis locations with venue selector
+- **Offline-first** - Local SQLite database with background sync
+- **Driver's License scanning** - AAMVA PDF417 barcode support for fast check-in
+- **POSaBIT integration** - Real-time queue management and customer lookup
+- **Auto-updates** - Automatic updates via GitHub releases
+- **Kiosk mode** - Fullscreen, frameless window for dedicated kiosk hardware
 
-### ID Scan Features
-- Parses AAMVA PDF417 barcode format (all US states)
-- Displays: Name, DOB, Age, DL Number on screen
-- Shows "Welcome Back!" if customer found in database
-- Red warning screen if under 21
+## Supported Venues
 
-### Admin Panel
-- Venue selection (6 Craft Cannabis locations)
-- Customer search by phone number
-- Sync status display (customer count, last sync time)
-- Force full sync button
-- Debug info (database stats)
+| Venue | Location |
+|-------|----------|
+| Craft Cannabis Tacoma | Tacoma, WA |
+| Craft Cannabis Andresen | Vancouver, WA |
+| Craft Cannabis Leavenworth | Leavenworth, WA |
+| Craft Cannabis Mill Plain | Vancouver, WA |
+| Craft Cannabis South Wenatchee | Wenatchee, WA |
+| Craft Cannabis Wenatchee | Wenatchee, WA |
 
-### Technical Features
-- **Offline-first**: Local SQLite database with 49k+ customers
-- **Background sync**: Initial full sync, then incremental every 15 minutes
-- **Secure API**: POSaBIT credentials stored in main process only
-- **Kiosk mode**: Fullscreen, no window controls
+## Check-in Flows
 
-## Project Structure
+### ID Scan (Driver's License)
+1. Customer scans DL barcode
+2. System extracts: name, DOB, address, gender
+3. Lookup by name in local database
+4. **If found (existing customer):**
+   - Prompt for loyalty signup if not a member
+   - Update demographics from DL regardless of loyalty choice
+   - Add to POSaBIT queue
+5. **If not found:**
+   - Create new customer with DL demographics
+   - Add to POSaBIT queue as new customer
 
-```
-craft-cannabis-kiosk/
-├── electron/
-│   ├── main.ts              # Electron main process
-│   ├── preload.cjs          # IPC bridge (CommonJS)
-│   ├── config/
-│   │   └── venues.ts        # 6 venue tokens
-│   └── services/
-│       ├── database.ts      # SQLite operations
-│       ├── posabit.ts       # POSaBIT API client
-│       └── sync.ts          # Customer sync logic
-├── components/
-│   ├── AdminPanel.tsx       # Admin settings & debug
-│   ├── VenueSelector.tsx    # First-run venue picker
-│   └── Kiosk/
-│       ├── KioskHome.tsx    # Main check-in screen
-│       ├── PhoneEntry.tsx   # Phone number input
-│       ├── IDScan.tsx       # DL barcode scanner
-│       ├── GuestEntry.tsx   # Guest check-in
-│       └── QREntry.tsx      # QR code (placeholder)
-├── services/
-│   ├── kioskApi.ts          # Abstraction layer (Electron/Web)
-│   └── posabit.ts           # Web fallback API
-├── types.ts                 # TypeScript interfaces
-└── App.tsx                  # Main app component
-```
+### Guest Entry (Manual)
+1. Customer enters first and last name
+2. Prompt for loyalty signup
+3. **If loyalty signup:**
+   - Option to scan DL for easy data entry
+   - Or manually enter phone and email
+   - Create customer in POSaBIT
+4. **If no loyalty:**
+   - Add to queue as guest (no customer record created)
 
-## Deployment
+## Architecture
 
-### Quick Deploy (Unpacked)
-1. Copy the `release/win-unpacked/` folder to target computer
-2. Run `Craft Cannabis Kiosk.exe`
-3. Select venue on first launch
-4. Wait for initial customer sync (~2-3 minutes for 49k customers)
+\
+## Database
 
-### Database Location
-`%APPDATA%/craft-cannabis-kiosk/customers.db`
+**Location:** 
+### Tables
+
+\
+### Sync Behavior
+
+- **First launch:** Full sync of all customers (~20k records, runs in background)
+- **Subsequent launches:** Incremental sync using - **Periodic refresh:** Every 15 minutes (incremental only)
+- **Offline queue:** Stores check-ins when offline, syncs when back online
 
 ## Development
 
-### Start Dev Mode
-```bash
-npm run electron:dev
-```
+### Prerequisites
 
-### Build for Production
-```bash
-npm run electron:build
-```
+- Node.js 18+
+- npm or yarn
+- Windows (for building Windows installer)
 
-## Hardware
+### Setup
 
-### Tested Scanner
-- Zebra DS9308 (PDF417 barcode scanner)
-- Works in keyboard emulation mode
+\
+> craft-cannabis-kiosk@1.1.0 electron:rebuild
+> electron-rebuild -f -w better-sqlite3
+### Run Development Mode
 
-## Venues
+\
+This starts Vite dev server and Electron concurrently with hot reload.
 
-| Location | ID |
-|----------|-----|
-| Craft Cannabis Tacoma | tacoma |
-| Craft Cannabis Andresen | andresen |
-| Craft Cannabis Leavenworth | leavenworth |
-| Craft Cannabis Mill Plain | millPlain |
-| Craft Cannabis South Wenatchee | southWenatchee |
-| Craft Cannabis Wenatchee | wenatchee |
+### Build Installer
 
-## Changelog
+\
+Output: 
+## Releasing Updates
 
-### v1.0.0 (January 2026)
-- Phone number lookup with local SQLite
-- ID scan with AAMVA PDF417 parsing
-- Age verification (21+ check)
-- Customer lookup by name from ID scan
-- Admin panel with sync controls
-- 6 venue support
-- Offline queue support
-- Background customer sync
+### Manual Release
+
+1. Update version in 2. Build the installer:
+   \3. Create GitHub release:
+   \
+### Auto-Update Mechanism
+
+The app checks for updates on launch via GitHub releases:
+
+1. App starts -> checks GitHub releases
+2. If newer version found -> downloads in background
+3. Prompts user to restart to apply update
+4. Update installs on next launch
+
+## Installation on Kiosk
+
+### Download Installer
+
+Go to: https://github.com/autosterea/craft-cannabis-kiosk/releases/latest
+
+Or via PowerShell:
+\Windows PowerShell
+Copyright (C) Microsoft Corporation. All rights reserved.
+
+Install the latest PowerShell for new features and improvements! https://aka.ms/PSWindows
+
+PS C:\Users\ravik\OneDrive\Desktop\Claude> 
+### First Launch
+
+1. Run the installer (one-click install)
+2. App launches in kiosk mode (fullscreen)
+3. Select venue from dropdown
+4. Initial customer sync starts in background
+5. Ready to check in customers
+
+### Kiosk Hardware Requirements
+
+- Windows 10/11
+- Touchscreen display (recommended)
+- USB barcode scanner (keyboard mode)
+- Internet connection
+
+## Scanner Configuration
+
+The app supports any USB barcode scanner in **keyboard mode** (HID). The scanner should be configured to:
+
+1. Output as keyboard input (default for most scanners)
+2. Add Enter/Return suffix after scan (most scanners do this by default)
+
+### Supported Barcodes
+
+- **Driver's License:** AAMVA PDF417 (back of license)
+- **Invalid barcodes:** Front of license, store barcodes, etc. show error message
+
+### Barcode Fields Extracted
+
+| Field | AAMVA Code | Example |
+|-------|------------|---------|
+| First Name | DAC | JOHN |
+| Last Name | DCS | DOE |
+| Address | DAG | 123 MAIN ST |
+| City | DAI | SEATTLE |
+| State | DAJ | WA |
+| ZIP Code | DAK | 98101 |
+| Date of Birth | DBB | 01011990 |
+| Gender | DBC | 1 (Male) / 2 (Female) |
+
+## API Integration
+
+### POSaBIT API v3
+
+Base URL: 
+**Authentication:**
+- Integrator Token (header): - Venue Token (header): 
+**Endpoints Used:**
+- \ - List/search customers
+- \ - Create customer
+- \ - Update customer
+- \ - Add to check-in queue
+
+## Troubleshooting
+
+### App won't start
+- Check Windows Event Viewer for errors
+- Delete \ and reinstall
+
+### Scanner not working
+- Ensure scanner is in keyboard mode
+- Test scanner in Notepad first
+- Check USB connection
+
+### Sync issues
+- Check internet connection
+- View sync status in app header
+- Database location: 
+### Update not installing
+- Check GitHub releases page is accessible
+- Manually download and run installer
+
+## Version History
+
+### v1.1.0 (Current)
+- Fixed DL barcode parsing for address fields
+- Added invalid barcode detection with visual guide
+- DL demographics now saved even when declining loyalty
+- New customers created from DL scan (not just lookup)
+- Added DL scan option during guest loyalty signup
+- Removed debug code for production
+
+### v1.0.0
+- Initial release
+- Multi-venue support
+- ID scanning and guest entry
+- POSaBIT integration
+- Auto-updates via GitHub
+
+## License
+
+Proprietary - Craft Cannabis / Autosterea
+
+## Support
+
+For issues or feature requests, contact the development team or create an issue at:
+https://github.com/autosterea/craft-cannabis-kiosk/issues

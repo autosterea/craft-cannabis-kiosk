@@ -12,6 +12,8 @@ import {
   getCurrentVenue,
   forceSync,
   getSyncStatus,
+  getBlockedWords,
+  isNameBlocked,
   Venue,
   QueueItem
 } from './services/kioskApi';
@@ -58,6 +60,14 @@ const App: React.FC = () => {
   } | null>(null);
   const [showSyncBanner, setShowSyncBanner] = useState(true);
   const [wasSyncing, setWasSyncing] = useState(false);
+
+  // Blocked words
+  const [blockedWords, setBlockedWordsState] = useState<string[]>([]);
+
+  // Load blocked words on startup
+  useEffect(() => {
+    getBlockedWords().then(setBlockedWordsState).catch(() => {});
+  }, []);
 
   // Check for existing venue selection on startup
   useEffect(() => {
@@ -172,6 +182,14 @@ const App: React.FC = () => {
   };
 
   const handleCheckIn = useCallback(async (customerData: Partial<Customer>) => {
+    // Safety net: block offensive names regardless of entry method
+    const checkName = customerData.name || '';
+    if (checkName && isNameBlocked(checkName, blockedWords)) {
+      setError('Please use your real name to check in.');
+      setTimeout(() => setError(null), 3000);
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -214,7 +232,7 @@ const App: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [fetchQueue, view]);
+  }, [fetchQueue, view, blockedWords]);
 
   // Show loading during initialization
   if (initializing) {

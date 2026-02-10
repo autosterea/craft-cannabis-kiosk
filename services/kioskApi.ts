@@ -233,3 +233,62 @@ export async function getAppVersion(): Promise<string> {
   }
   return '1.0.0';
 }
+
+// Blocked words
+export async function getBlockedWords(): Promise<string[]> {
+  if (isElectron()) {
+    return window.kiosk.getBlockedWords();
+  }
+  return [];
+}
+
+export async function setBlockedWords(words: string[]): Promise<void> {
+  if (isElectron()) {
+    await window.kiosk.setBlockedWords(words);
+  }
+}
+
+// Validation helper — checks whole words + substring matching for key patterns
+export function isNameBlocked(name: string, blockedWords: string[]): boolean {
+  // Strip everything except letters and spaces, then normalize
+  const cleaned = name.replace(/[^a-zA-Z\s]/g, '').toLowerCase().trim();
+  if (!cleaned) return false;
+
+  const nameParts = cleaned.split(/\s+/);
+  const nameJoined = nameParts.join(''); // "your mom" → "yourmom"
+  const nameFull = cleaned; // keeps spaces for multi-word phrase check
+
+  // Also decode common leet-speak substitutions
+  const leetDecoded = cleaned
+    .replace(/0/g, 'o').replace(/1/g, 'i').replace(/3/g, 'e')
+    .replace(/4/g, 'a').replace(/5/g, 's').replace(/@/g, 'a')
+    .replace(/\$/g, 's');
+  const leetParts = leetDecoded.split(/\s+/);
+
+  // Words that should substring-match (block "magatt", "magatard", etc.)
+  const substringPatterns = [
+    'maga', 'fuck', 'fuk', 'fck', 'nigg', 'fagg', 'retard',
+    'libtard', 'shoot', 'bomb',
+  ];
+
+  for (const word of blockedWords) {
+    const w = word.toLowerCase();
+
+    // Exact whole-word match
+    if (nameParts.includes(w) || leetParts.includes(w)) return true;
+
+    // Multi-word joined match ("deez nuts" → check "deeznuts", "yourmom", etc.)
+    if (w.length > 3 && nameJoined.includes(w)) return true;
+  }
+
+  // Substring pattern matching (catches variations like "magatt", "fuckyou", etc.)
+  for (const pattern of substringPatterns) {
+    if (nameFull.includes(pattern) || leetDecoded.includes(pattern)) return true;
+  }
+
+  // Check full joined string for multi-word blocked phrases
+  const multiWordBlocked = ['deeznuts', 'yourmom', 'urmom', 'bigdick', 'sugarbaby'];
+  if (multiWordBlocked.some(phrase => nameJoined.includes(phrase))) return true;
+
+  return false;
+}
