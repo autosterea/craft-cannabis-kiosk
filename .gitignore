@@ -19,6 +19,9 @@ release2/
 release3/
 release4/
 
+# API tokens (secrets)
+electron/config/tokens.ts
+
 # SQLite database (local development)
 *.db
 *.sqlite

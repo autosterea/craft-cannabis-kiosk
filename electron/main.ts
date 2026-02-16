@@ -95,21 +95,11 @@ autoUpdater.on('download-progress', (progress) => {
 });
 
 autoUpdater.on('update-downloaded', (info) => {
-  console.log('Update downloaded:', info.version);
+  console.log('Update downloaded:', info.version, '- will install silently on next quit');
   if (mainWindow) {
     mainWindow.webContents.send('update-downloaded', info);
   }
-  // Show notification and install on next restart
-  dialog.showMessageBox({
-    type: 'info',
-    title: 'Update Ready',
-    message: `Version ${info.version} has been downloaded and will be installed when you restart the app.`,
-    buttons: ['Restart Now', 'Later']
-  }).then((result) => {
-    if (result.response === 0) {
-      autoUpdater.quitAndInstall();
-    }
-  });
+  // Silent install on next app quit - no dialog popup
 });
 
 autoUpdater.on('error', (error) => {
@@ -392,14 +382,20 @@ app.whenReady().then(() => {
     initializeServices(savedVenue);
   }
 
-  // Check for updates on startup (only in production)
+  // Check for updates on startup and every 24 hours (only in production)
   if (!isDev) {
-    setTimeout(() => {
+    const checkForUpdates = () => {
       console.log('Checking for updates...');
       autoUpdater.checkForUpdates().catch((err) => {
         console.error('Update check failed:', err);
       });
-    }, 5000); // Wait 5 seconds after startup
+    };
+
+    // Initial check 30 seconds after startup
+    setTimeout(checkForUpdates, 30000);
+
+    // Then check every 24 hours
+    setInterval(checkForUpdates, 24 * 60 * 60 * 1000);
   }
 
   app.on('activate', () => {

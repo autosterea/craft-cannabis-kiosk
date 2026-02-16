@@ -50,6 +50,9 @@ const App: React.FC = () => {
   const [currentVenue, setCurrentVenue] = useState<Venue | null>(null);
   const [initializing, setInitializing] = useState(true);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [showPinEntry, setShowPinEntry] = useState(false);
+  const [pin, setPin] = useState('');
+  const [pinError, setPinError] = useState(false);
 
   // Sync status
   const [syncStatus, setSyncStatus] = useState<{
@@ -279,14 +282,12 @@ const App: React.FC = () => {
             {currentVenue.name}
           </button>
         )}
-        {isElectron() && (
-          <button
-            onClick={() => setShowAdminPanel(true)}
-            className="px-3 py-1 rounded text-xs bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white"
-          >
-            Admin
-          </button>
-        )}
+        <button
+          onClick={() => { setShowPinEntry(true); setPin(''); setPinError(false); }}
+          className="px-3 py-1 rounded text-xs bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white"
+        >
+          Admin
+        </button>
       </div>
 
       {/* Sync Status Banner - only show when syncing, just finished, or has problem */}
@@ -345,12 +346,81 @@ const App: React.FC = () => {
         <QueueDisplay queue={queue} />
       )}
 
+      {/* PIN Entry Overlay */}
+      {showPinEntry && (
+        <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center">
+          <div className="bg-zinc-900 p-10 rounded-3xl border border-zinc-700 shadow-2xl text-center w-full max-w-sm">
+            <h2 className="text-2xl font-craft font-bold text-gold mb-2 uppercase tracking-wider">Admin Access</h2>
+            <p className="text-zinc-400 text-sm mb-6">Enter PIN to continue</p>
+
+            {pinError && (
+              <div className="mb-4 p-3 bg-red-900/50 border border-red-700 rounded-xl text-red-300 text-sm">
+                Incorrect PIN
+              </div>
+            )}
+
+            <div className="bg-black/50 p-4 rounded-2xl mb-6 border border-zinc-800">
+              <div className="text-3xl font-mono text-gold tracking-[0.5em] h-10 flex items-center justify-center">
+                {pin.split('').map(() => '*').join('')}
+                {pin.length < 3 && <span className="animate-pulse text-zinc-600">|</span>}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3 mb-6">
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, '', 0, '←'].map((key, i) => (
+                key === '' ? <div key={i} /> : (
+                  <button
+                    key={i}
+                    onClick={() => {
+                      if (key === '←') {
+                        setPin(prev => prev.slice(0, -1));
+                        setPinError(false);
+                      } else {
+                        const newPin = pin + key.toString();
+                        if (newPin.length <= 3) {
+                          setPin(newPin);
+                          setPinError(false);
+                          if (newPin.length === 3) {
+                            if (newPin === '420') {
+                              setShowPinEntry(false);
+                              setShowAdminPanel(true);
+                              setPin('');
+                            } else {
+                              setPinError(true);
+                              setTimeout(() => setPin(''), 500);
+                            }
+                          }
+                        }
+                      }
+                    }}
+                    className={`h-16 text-2xl font-craft flex items-center justify-center rounded-xl transition-all active:scale-95 ${
+                      key === '←' ? 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600' : 'bg-zinc-800 text-white hover:bg-zinc-700'
+                    }`}
+                  >
+                    {key}
+                  </button>
+                )
+              ))}
+            </div>
+
+            <button
+              onClick={() => { setShowPinEntry(false); setPin(''); setPinError(false); }}
+              className="text-zinc-500 text-sm hover:text-zinc-300 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Admin Panel */}
       {showAdminPanel && (
         <AdminPanel
           onClose={() => setShowAdminPanel(false)}
-          onVenueChange={() => {
+          onVenueChange={async () => {
             setShowAdminPanel(false);
+            const venue = await getCurrentVenue();
+            if (venue) setCurrentVenue(venue);
             fetchQueue();
           }}
         />

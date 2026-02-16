@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Logo, GoldButton } from '../Branding';
 import { Customer, CheckInMethod } from '../../types';
 import IDScan from './IDScan';
@@ -14,6 +14,15 @@ interface KioskHomeProps {
 
 const KioskHome: React.FC<KioskHomeProps> = ({ onCheckIn, lastCheckIn }) => {
   const [activeScreen, setActiveScreen] = useState<'HOME' | CheckInMethod>('HOME');
+  const prevLastCheckIn = useRef<Customer | null>(null);
+
+  // Auto-return to home screen after check-in confirmation clears
+  useEffect(() => {
+    if (prevLastCheckIn.current && !lastCheckIn) {
+      setActiveScreen('HOME');
+    }
+    prevLastCheckIn.current = lastCheckIn;
+  }, [lastCheckIn]);
 
   const handleBack = () => setActiveScreen('HOME');
 

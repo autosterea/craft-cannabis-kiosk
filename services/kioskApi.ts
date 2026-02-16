@@ -40,9 +40,10 @@ export interface Venue {
 }
 
 // Web API fallback (for development without Electron)
+// Tokens loaded from .env.local (gitignored) via Vite env vars
 const WEB_API_BASE = '/api/posabit';
-const INTEGRATOR_TOKEN = 'REDACTED_INTEGRATOR_TOKEN';
-const DEFAULT_VENUE_TOKEN = 'REDACTED_VENUE_TOKEN'; // Tacoma
+const INTEGRATOR_TOKEN = import.meta.env.VITE_POSABIT_INTEGRATOR_TOKEN || '';
+const DEFAULT_VENUE_TOKEN = import.meta.env.VITE_POSABIT_VENUE_TOKEN || '';
 
 function getWebAuthHeader(): string {
   return `Basic ${btoa(`${INTEGRATOR_TOKEN}:${DEFAULT_VENUE_TOKEN}`)}`;

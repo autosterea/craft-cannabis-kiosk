@@ -1,9 +1,9 @@
-// POSaBIT API v3 Service
+// POSaBIT API v3 Service (Web fallback - dev mode only)
+// Tokens loaded from .env.local (gitignored) via Vite env vars
 
-// Use proxy in development to avoid CORS issues
 const BASE_URL = '/api/posabit';
-const INTEGRATOR_TOKEN = 'REDACTED_INTEGRATOR_TOKEN';
-const VENUE_TOKEN = 'REDACTED_VENUE_TOKEN';
+const INTEGRATOR_TOKEN = import.meta.env.VITE_POSABIT_INTEGRATOR_TOKEN || '';
+const VENUE_TOKEN = import.meta.env.VITE_POSABIT_VENUE_TOKEN || '';
 
 // Create Basic Auth header
 const getAuthHeader = (): string => {

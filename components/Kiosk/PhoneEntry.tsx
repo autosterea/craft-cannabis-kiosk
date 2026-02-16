@@ -232,47 +232,41 @@ const PhoneEntry: React.FC<PhoneEntryProps> = ({ onComplete }) => {
     );
   }
 
+  // Handle name keyboard input
+  const handleNameChange = (val: string) => {
+    setName(val.replace(/[^a-zA-Z '-]/g, ''));
+  };
+
   // Name entry state (customer not found)
   if (step === 'NAME') {
     return (
-      <div className="w-full max-w-xl bg-zinc-900/50 p-10 rounded-3xl border border-zinc-800 shadow-xl text-center">
+      <div className="w-full max-w-2xl bg-zinc-900/50 p-10 rounded-3xl border border-zinc-800 shadow-xl text-center">
         <h2 className="text-3xl font-craft font-bold mb-4 text-gold uppercase tracking-wider">Almost There!</h2>
         <p className="text-zinc-400 mb-2">We didn't find your phone number in our system.</p>
-        <p className="text-zinc-500 text-sm mb-8">Phone: {formatPhone(phone)}</p>
+        <p className="text-zinc-500 text-sm mb-6">Phone: {formatPhone(phone)}</p>
 
-        <div className="mb-8">
-          <input
-            type="text"
-            placeholder="First Last"
-            value={name}
-            onChange={(e) => setName(e.target.value.replace(/[^a-zA-Z\s'-]/g, ''))}
-            className={`w-full bg-black/50 border-2 rounded-2xl p-6 text-2xl text-white placeholder:text-zinc-700 outline-none text-center ${
-              nameBlocked ? 'border-red-500 focus:border-red-500' : 'border-zinc-800 focus:border-gold'
-            }`}
-            autoFocus
-          />
-          {nameBlocked && (
-            <p className="text-red-400 text-sm mt-2">Please use your real name</p>
-          )}
-        </div>
+        {nameBlocked && (
+          <div className="mb-4 p-3 bg-red-900/50 border border-red-700 rounded-xl text-red-300 text-sm">
+            Please use your real name
+          </div>
+        )}
 
-        <div className="flex gap-4">
-          <button
-            onClick={() => { setStep('PHONE'); setPhone(''); }}
-            className="flex-1 p-6 rounded-xl text-xl font-craft bg-zinc-800 text-white hover:bg-zinc-700 transition-all"
-          >
-            Back
-          </button>
-          <button
-            onClick={submitName}
-            disabled={!name.trim() || loading || nameBlocked}
-            className={`flex-1 p-6 rounded-xl text-xl font-craft font-bold transition-all ${
-              name.trim() && !loading && !nameBlocked ? 'bg-gold text-black hover:bg-[#d8c19d]' : 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
-            }`}
-          >
-            {loading ? 'Adding...' : 'Join Queue'}
-          </button>
-        </div>
+        <TouchKeyboard
+          value={name}
+          onChange={handleNameChange}
+          onSubmit={() => { if (name.trim() && !nameBlocked) submitName(); }}
+          placeholder="First Last"
+          type="text"
+          submitLabel="Join Queue"
+          maxLength={30}
+        />
+
+        <button
+          onClick={() => { setStep('PHONE'); setPhone(''); setName(''); }}
+          className="mt-4 text-zinc-500 text-sm hover:text-zinc-300 transition-colors"
+        >
+          ← Back to phone entry
+        </button>
       </div>
     );
   }

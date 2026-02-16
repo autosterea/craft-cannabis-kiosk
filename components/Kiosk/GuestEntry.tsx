@@ -19,7 +19,7 @@ interface ScannedDLData {
   gender?: 'M' | 'F' | 'X';
 }
 
-type Step = 'NAME' | 'LOYALTY_PROMPT' | 'DL_SCAN_OPTION' | 'DL_SCANNING' | 'PHONE_ENTRY' | 'EMAIL_ENTRY' | 'CREATING';
+type Step = 'NAME' | 'NAME_INITIAL' | 'LOYALTY_PROMPT' | 'DL_SCAN_OPTION' | 'DL_SCANNING' | 'PHONE_ENTRY' | 'EMAIL_ENTRY' | 'CREATING';
 
 // Parse driver's license barcode (simplified version)
 const parseDriversLicense = (scanData: string): ScannedDLData | null => {
@@ -316,59 +316,59 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
     }
   };
 
-  // Step 1: Enter Name
+  // Handle name keyboard input - filter to only allow letters, hyphens, apostrophes
+  const handleNameChange = (val: string) => {
+    setName(val.replace(/[^a-zA-Z'-]/g, ''));
+  };
+
+  // Step 1: Enter First Name via on-screen keyboard
   if (step === 'NAME') {
     return (
-      <div className="w-full max-w-xl bg-zinc-900/50 p-10 rounded-3xl border border-zinc-800 shadow-xl text-center">
-        <h2 className="text-3xl font-craft font-bold mb-4 text-gold uppercase tracking-wider">Guest Check-In</h2>
-        <p className="text-zinc-400 mb-8">Enter your name to get started</p>
+      <div className="w-full max-w-2xl bg-zinc-900/50 p-10 rounded-3xl border border-zinc-800 shadow-xl text-center">
+        <h2 className="text-3xl font-craft font-bold mb-2 text-gold uppercase tracking-wider">Guest Check-In</h2>
+        <p className="text-zinc-400 mb-6">Enter your first name</p>
 
-        <div className="space-y-6 mb-8 text-left">
-          {/* First Name */}
-          <div>
-            <label className="text-zinc-500 font-craft text-xs uppercase ml-4">
-              First Name *
-            </label>
-            <input
-              type="text"
-              placeholder="Ex: David"
-              value={name}
-              onChange={(e) => setName(e.target.value.replace(/[^a-zA-Z\s'-]/g, ''))}
-              className={`w-full bg-black/40 border-2 rounded-2xl p-5 text-xl text-white placeholder:text-zinc-700 outline-none transition-all ${
-                nameBlocked ? 'border-red-500 focus:border-red-500' : 'border-zinc-800 focus:border-gold'
-              }`}
-              autoFocus
-            />
-            {nameBlocked && (
-              <p className="text-red-400 text-sm mt-2 ml-4">Please use your real name</p>
-            )}
+        {nameBlocked && (
+          <div className="mb-4 p-3 bg-red-900/50 border border-red-700 rounded-xl text-red-300 text-sm">
+            Please use your real name
           </div>
+        )}
 
-          {/* Last Initial */}
-          <div>
-            <label className="text-zinc-500 font-craft text-xs uppercase ml-4">
-              Last Initial <span className="text-zinc-600">(optional)</span>
-            </label>
-            <input
-              type="text"
-              placeholder="Ex: S"
-              maxLength={1}
-              value={initial}
-              onChange={(e) => setInitial(e.target.value.replace(/[^a-zA-Z]/g, '').toUpperCase())}
-              className="w-24 bg-black/40 border-2 border-zinc-800 rounded-2xl p-5 text-xl text-white placeholder:text-zinc-700 focus:border-gold outline-none text-center transition-all"
-            />
-          </div>
-        </div>
+        <TouchKeyboard
+          value={name}
+          onChange={handleNameChange}
+          onSubmit={() => { if (name.trim() && !nameBlocked) setStep('NAME_INITIAL'); }}
+          placeholder="First Name"
+          type="text"
+          submitLabel="Next →"
+          maxLength={20}
+        />
+      </div>
+    );
+  }
+
+  // Step 1b: Enter Last Initial
+  if (step === 'NAME_INITIAL') {
+    return (
+      <div className="w-full max-w-2xl bg-zinc-900/50 p-10 rounded-3xl border border-zinc-800 shadow-xl text-center">
+        <h2 className="text-3xl font-craft font-bold mb-2 text-gold uppercase tracking-wider">Hi {name}!</h2>
+        <p className="text-zinc-400 mb-6">Enter your last initial <span className="text-zinc-600">(optional)</span></p>
+
+        <TouchKeyboard
+          value={initial}
+          onChange={(val) => setInitial(val.replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 1))}
+          onSubmit={proceedToLoyaltyPrompt}
+          placeholder="Last Initial (e.g. S)"
+          type="text"
+          submitLabel="Continue →"
+          maxLength={1}
+        />
 
         <button
-          onClick={proceedToLoyaltyPrompt}
-          disabled={!name || nameBlocked}
-          className={`
-            w-full p-7 rounded-2xl text-2xl font-craft font-bold transition-all active:scale-95
-            ${name && !nameBlocked ? 'bg-gold text-black hover:bg-[#d8c19d]' : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'}
-          `}
+          onClick={() => { setName(''); setInitial(''); setStep('NAME'); }}
+          className="mt-4 text-zinc-500 text-sm hover:text-zinc-300 transition-colors"
         >
-          Continue
+          ← Back to name
         </button>
       </div>
     );
@@ -416,7 +416,7 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
         </div>
 
         <button
-          onClick={() => setStep('NAME')}
+          onClick={() => setStep('NAME_INITIAL')}
           className="text-zinc-500 text-sm hover:text-zinc-300 transition-colors"
         >
           ← Back to name entry
