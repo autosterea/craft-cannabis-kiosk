@@ -63,7 +63,7 @@
       "provider": "github",
       "owner": "autosterea",
       "repo": "craft-cannabis-kiosk",
-      "private": true
+      "private": false
     }
   }
 }
