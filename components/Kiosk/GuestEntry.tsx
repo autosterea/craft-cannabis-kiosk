@@ -70,12 +70,10 @@ const parseDriversLicense = (scanData: string): ScannedDLData | null => {
 
     firstName = firstName.replace(/[^A-Za-z\-' ]/g, '').trim();
     lastName = lastName.replace(/[^A-Za-z\-' ]/g, '').trim();
-    if (firstName.includes(' ')) firstName = firstName.split(/\s+/)[0];
-    if (lastName.includes(' ')) lastName = lastName.split(/\s+/)[0];
 
     if (!firstName) return null;
 
-    const properCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+    const properCase = (s: string) => s.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
 
     return {
       firstName: properCase(firstName),
@@ -151,7 +149,7 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
     onComplete({
       name,
       lastNameInitial: initial || '',
-      method: 'GUEST',
+      method: 'WALK_IN',
       loyaltyStatus: 'Guest',
     });
   };

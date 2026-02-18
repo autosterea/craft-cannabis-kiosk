@@ -82,7 +82,7 @@ const PhoneEntry: React.FC<PhoneEntryProps> = ({ onComplete }) => {
     onComplete({
       name: nameParts[0],
       lastNameInitial: nameParts[1]?.[0]?.toUpperCase() || '',
-      method: 'PHONE',
+      method: 'WALK_IN',
       phone: phone,
       loyaltyStatus: 'Guest', // New customer, not in loyalty yet
     });

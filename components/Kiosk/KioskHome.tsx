@@ -27,6 +27,23 @@ const KioskHome: React.FC<KioskHomeProps> = ({ onCheckIn, lastCheckIn }) => {
   const handleBack = () => setActiveScreen('HOME');
 
   if (lastCheckIn) {
+    // Special confirmation for online orders
+    if (lastCheckIn.isOnlineOrder) {
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center bg-[#1a1a1a] animate-in fade-in zoom-in duration-500">
+          <div className="bg-zinc-800 p-12 rounded-3xl border-2 border-green-500 text-center max-w-xl shadow-2xl">
+            <div className="text-6xl mb-6">📦</div>
+            <h1 className="text-4xl font-craft font-bold text-green-400 mb-4">Online Order Found!</h1>
+            <p className="text-2xl text-zinc-300 mb-4">
+              Welcome, <span className="font-bold text-white">{lastCheckIn.name}</span>.
+            </p>
+            <p className="text-xl text-gold font-bold mb-4">Your online order is ready.</p>
+            <p className="text-lg text-zinc-400">Please proceed to the counter — a budtender will assist you shortly.</p>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="flex-1 flex flex-col items-center justify-center bg-[#1a1a1a] animate-in fade-in zoom-in duration-500">
         <div className="bg-zinc-800 p-12 rounded-3xl border-2 border-gold text-center max-w-xl shadow-2xl">

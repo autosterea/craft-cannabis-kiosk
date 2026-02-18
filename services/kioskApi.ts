@@ -170,6 +170,37 @@ export async function addToQueue(data: {
   return webAddToQueue(data.name, 'walk_in', data.phone);
 }
 
+// Check if a customer has a pending online order in the queue
+export async function checkForOnlineOrder(customerName: string, customerId?: number): Promise<QueueItem | null> {
+  try {
+    const response = await getQueue();
+    if (!response?.customer_queues) return null;
+
+    // Only check open/processing order_ahead entries
+    const onlineOrders = response.customer_queues.filter(
+      q => q.source === 'order_ahead' && (q.aasm_state === 'open' || q.aasm_state === 'processing')
+    );
+
+    // Match by customer_id first (most reliable)
+    if (customerId) {
+      const match = onlineOrders.find(q => q.customer_id === customerId);
+      if (match) return match;
+    }
+
+    // Fallback: match by name (case-insensitive)
+    const normalizedName = customerName.trim().toUpperCase();
+    const nameMatch = onlineOrders.find(q => {
+      const queueName = q.name.trim().toUpperCase();
+      return queueName === normalizedName || queueName.startsWith(normalizedName + ' ');
+    });
+
+    return nameMatch || null;
+  } catch (err) {
+    console.error('Failed to check for online orders:', err);
+    return null;
+  }
+}
+
 export async function getSyncStatus(): Promise<{
   lastSync: string | null;
   isSyncing: boolean;

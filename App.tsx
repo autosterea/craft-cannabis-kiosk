@@ -14,6 +14,7 @@ import {
   getSyncStatus,
   getBlockedWords,
   isNameBlocked,
+  checkForOnlineOrder,
   Venue,
   QueueItem
 } from './services/kioskApi';
@@ -31,7 +32,7 @@ const mapQueueItemToCustomer = (item: QueueItem): Customer => {
     name: firstName,
     lastNameInitial: lastInitial,
     checkInTime: new Date(item.created_at),
-    method: item.source === 'order_ahead' ? 'APP' : 'GUEST',
+    method: item.source === 'order_ahead' ? 'APP' : 'WALK_IN',
     loyaltyStatus: item.customer_id ? 'Member' : 'Guest',
     status: item.aasm_state === 'open' ? 'Waiting' :
             item.aasm_state === 'processing' ? 'Being Served' : 'Completed',
@@ -200,10 +201,33 @@ const App: React.FC = () => {
         ? `${customerData.name} ${customerData.lastNameInitial}`
         : customerData.name || 'Guest';
 
+      // Check for pending online order before adding to queue
+      const onlineOrder = await checkForOnlineOrder(fullName, customerData.customerId);
+
+      if (onlineOrder) {
+        // Customer has a pending online order — don't add to queue again
+        setLastCheckIn({
+          id: onlineOrder.customer_queue_id.toString(),
+          name: customerData.name || 'Guest',
+          lastNameInitial: customerData.lastNameInitial || '',
+          checkInTime: new Date(),
+          method: 'APP',
+          loyaltyStatus: customerData.loyaltyStatus || 'Guest',
+          status: 'Waiting',
+          isOnlineOrder: true,
+        });
+
+        // Show online order confirmation for longer (5 seconds)
+        setTimeout(() => setLastCheckIn(null), 5000);
+        setLoading(false);
+        return;
+      }
+
+      // Normal walk-in flow — add to queue
       const result = await addToQueue({
         name: fullName,
         phone: customerData.phone,
-        method: customerData.method || 'GUEST',
+        method: customerData.method || 'WALK_IN',
         customerId: customerData.customerId,
       });
 
@@ -217,7 +241,7 @@ const App: React.FC = () => {
         name: customerData.name || 'Guest',
         lastNameInitial: customerData.lastNameInitial || '',
         checkInTime: new Date(),
-        method: customerData.method || 'GUEST',
+        method: customerData.method || 'WALK_IN',
         loyaltyStatus: customerData.loyaltyStatus || 'Guest',
         status: 'Waiting',
       };

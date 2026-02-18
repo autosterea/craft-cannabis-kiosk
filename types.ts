@@ -1,5 +1,5 @@
 
-export type CheckInMethod = 'ID_SCAN' | 'PHONE' | 'QR' | 'GUEST' | 'APP';
+export type CheckInMethod = 'ID_SCAN' | 'PHONE' | 'QR' | 'GUEST' | 'APP' | 'WALK_IN';
 
 export interface Customer {
   id: string;
@@ -15,6 +15,7 @@ export interface Customer {
   driversLicense?: string;   // For ID scan method
   dateOfBirth?: string;      // MMDDYYYY format from ID scan
   age?: number;              // Calculated age from DOB
+  isOnlineOrder?: boolean;   // True if customer has pending online order
 }
 
 export interface LoyaltyProfile {

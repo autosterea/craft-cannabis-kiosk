@@ -223,31 +223,49 @@ export function getCustomersWithPhoneCount(): { total: number; withPhone: number
   return { total, withPhone };
 }
 
-// Search customer by first name and last name
+// Search customer by first name and last name (multi-strategy matching)
 export function getCustomerByName(firstName: string, lastName: string, venueId: string): DbCustomer | null {
   if (!db) throw new Error('Database not initialized');
 
-  // Case-insensitive search
   const normalizedFirst = firstName.trim().toUpperCase();
   const normalizedLast = lastName.trim().toUpperCase();
 
   console.log('Searching for customer by name:', normalizedFirst, normalizedLast, 'venue:', venueId);
 
-  const stmt = db.prepare(`
-    SELECT * FROM customers
-    WHERE UPPER(first_name) = ? AND UPPER(last_name) = ? AND venue_id = ?
-    LIMIT 1
-  `);
-
-  const result = stmt.get(normalizedFirst, normalizedLast, venueId) as DbCustomer | undefined;
-
+  // Strategy 1: Exact match (case-insensitive)
+  let result = db.prepare(
+    `SELECT * FROM customers WHERE UPPER(first_name) = ? AND UPPER(last_name) = ? AND venue_id = ? LIMIT 1`
+  ).get(normalizedFirst, normalizedLast, venueId) as DbCustomer | undefined;
   if (result) {
-    console.log('Found customer by name:', result.first_name, result.last_name, 'ID:', result.id);
-  } else {
-    console.log('No customer found with name:', normalizedFirst, normalizedLast);
+    console.log('Found customer by exact match:', result.first_name, result.last_name, 'ID:', result.id);
+    return result;
   }
 
-  return result || null;
+  // Strategy 2: First word of multi-word last name (e.g. DL has "Van Houten", DB has "Van")
+  const lastNameFirstWord = normalizedLast.split(/\s+/)[0];
+  if (lastNameFirstWord !== normalizedLast) {
+    result = db.prepare(
+      `SELECT * FROM customers WHERE UPPER(first_name) = ? AND UPPER(last_name) = ? AND venue_id = ? LIMIT 1`
+    ).get(normalizedFirst, lastNameFirstWord, venueId) as DbCustomer | undefined;
+    if (result) {
+      console.log('Found customer by first-word-of-last-name:', result.first_name, result.last_name, 'ID:', result.id);
+      return result;
+    }
+  }
+
+  // Strategy 3: Last name starts-with (handles DL truncation, e.g. "Jor" matching "Jordan")
+  if (normalizedLast.length >= 2) {
+    result = db.prepare(
+      `SELECT * FROM customers WHERE UPPER(first_name) = ? AND UPPER(last_name) LIKE ? AND venue_id = ? LIMIT 1`
+    ).get(normalizedFirst, normalizedLast + '%', venueId) as DbCustomer | undefined;
+    if (result) {
+      console.log('Found customer by last-name-starts-with:', result.first_name, result.last_name, 'ID:', result.id);
+      return result;
+    }
+  }
+
+  console.log('No customer found with name:', normalizedFirst, normalizedLast);
+  return null;
 }
 
 // Add offline queue entry

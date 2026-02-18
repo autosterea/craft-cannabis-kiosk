@@ -179,10 +179,6 @@ const parseDriversLicense = (scanData: string): ParsedLicense | null => {
     // If middle name is "NONE", clear it
     const cleanMiddle = middleName.replace(/[^A-Za-z\-' ]/g, '').trim();
 
-    // Take only first word if multiple
-    if (firstName.includes(' ')) firstName = firstName.split(/\s+/)[0];
-    if (lastName.includes(' ')) lastName = lastName.split(/\s+/)[0];
-
     // Calculate age from DOB
     const ageInfo = calculateAge(dateOfBirth);
 
@@ -190,8 +186,8 @@ const parseDriversLicense = (scanData: string): ParsedLicense | null => {
       return null;
     }
 
-    // Proper case the names
-    const properCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+    // Proper case the names (handles multi-word names like "Van Houten")
+    const properCase = (s: string) => s.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
 
     return {
       firstName: properCase(firstName),
@@ -219,7 +215,7 @@ const parseDriversLicense = (scanData: string): ParsedLicense | null => {
 };
 
 const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
-  const [status, setStatus] = useState<'READY' | 'SCANNING' | 'FOUND' | 'LOYALTY_PROMPT' | 'EMAIL_ENTRY' | 'UPDATING_LOYALTY' | 'SUCCESS' | 'UNDERAGE' | 'INVALID_SCAN'>('READY');
+  const [status, setStatus] = useState<'READY' | 'SCANNING' | 'FOUND' | 'LOYALTY_PROMPT' | 'EMAIL_ENTRY' | 'UPDATING_LOYALTY' | 'SUCCESS' | 'UNDERAGE' | 'INVALID_SCAN' | 'NEW_CUSTOMER_LOYALTY_PROMPT' | 'NEW_CUSTOMER_EMAIL'>('READY');
   const [scanBuffer, setScanBuffer] = useState('');
   const [scannedInfo, setScannedInfo] = useState<ParsedLicense | null>(null);
   const [foundCustomer, setFoundCustomer] = useState<KioskCustomer | null>(null);
@@ -363,27 +359,37 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
       console.error('Customer lookup failed:', error);
     }
 
-    // Customer not found - create customer record with DL demographics (no loyalty)
+    // Customer not found - show loyalty prompt instead of creating empty profile
+    setFoundCustomer(null);
+    setStatus('NEW_CUSTOMER_LOYALTY_PROMPT');
+  };
+
+  // New customer declines loyalty — create with DL demographics only
+  const newCustomerSkipLoyalty = async () => {
+    if (!scannedInfo) return;
+
+    const firstName = scannedInfo.firstName || 'Guest';
+    const lastName = scannedInfo.lastName || '';
+    const lastInitial = lastName ? lastName[0].toUpperCase() : '';
+
     setStatus('SUCCESS');
 
     let newCustomerId: number | undefined;
     try {
       const newCustomer = await createCustomer({
-        firstName: firstName,
+        firstName,
         lastName: lastName || undefined,
-        telephone: '', // No phone from DL
+        telephone: '',
         loyaltyOptIn: false,
-        // Demographics from DL
-        address1: parsed.address,
-        city: parsed.city,
-        state: parsed.state,
-        zipCode: parsed.zipCode,
-        dateOfBirth: parsed.dateOfBirth,
-        gender: parsed.gender,
+        address1: scannedInfo.address,
+        city: scannedInfo.city,
+        state: scannedInfo.state,
+        zipCode: scannedInfo.zipCode,
+        dateOfBirth: scannedInfo.dateOfBirth,
+        gender: scannedInfo.gender,
       });
       newCustomerId = newCustomer.id;
     } catch (error) {
-      // Silently fail - still check them in as guest
       console.error('Failed to create customer from DL:', error);
     }
 
@@ -394,15 +400,72 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
         method: 'ID_SCAN',
         loyaltyStatus: 'Guest',
         customerId: newCustomerId,
-        driversLicense: parsed.licenseNumber,
-        dateOfBirth: parsed.dateOfBirth,
-        age: parsed.age,
+        driversLicense: scannedInfo.licenseNumber,
+        dateOfBirth: scannedInfo.dateOfBirth,
+        age: scannedInfo.age,
       });
-      // Reset state for next scan
       setScannedInfo(null);
       setFoundCustomer(null);
       setStatus('READY');
     }, 1500);
+  };
+
+  // New customer wants loyalty — go to email entry
+  const newCustomerLoyaltySignup = () => {
+    if (!scannedInfo) return;
+    setEmail('');
+    setStatus('NEW_CUSTOMER_EMAIL');
+  };
+
+  // New customer submits email for loyalty — create customer with DL + email + loyalty
+  const newCustomerSubmitEmail = async () => {
+    if (!scannedInfo || !email) return;
+
+    const firstName = scannedInfo.firstName || 'Guest';
+    const lastName = scannedInfo.lastName || '';
+    const lastInitial = lastName ? lastName[0].toUpperCase() : '';
+
+    setStatus('UPDATING_LOYALTY');
+
+    try {
+      const newCustomer = await createCustomer({
+        firstName,
+        lastName: lastName || undefined,
+        telephone: '',
+        email,
+        loyaltyOptIn: true,
+        address1: scannedInfo.address,
+        city: scannedInfo.city,
+        state: scannedInfo.state,
+        zipCode: scannedInfo.zipCode,
+        dateOfBirth: scannedInfo.dateOfBirth,
+        gender: scannedInfo.gender,
+      });
+
+      setScannedInfo(null);
+      setFoundCustomer(null);
+      setEmail('');
+      setStatus('READY');
+      resetScan();
+
+      onComplete({
+        name: firstName,
+        lastNameInitial: lastInitial,
+        method: 'ID_SCAN',
+        loyaltyStatus: 'Member',
+        customerId: newCustomer.id,
+        driversLicense: scannedInfo.licenseNumber,
+        dateOfBirth: scannedInfo.dateOfBirth,
+        age: scannedInfo.age,
+      });
+    } catch (error) {
+      console.error('Failed to create loyalty customer:', error);
+      // Fallback: create without loyalty
+      setEmail('');
+      setStatus('READY');
+      resetScan();
+      newCustomerSkipLoyalty();
+    }
   };
 
   // Confirm found customer (called when user clicks "That's Me!" or "Check In")
@@ -718,6 +781,88 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
           Signing You Up...
         </h2>
         <p className="text-zinc-400">Adding you to our loyalty program!</p>
+      </div>
+    );
+  }
+
+  // NEW_CUSTOMER_LOYALTY_PROMPT state - New customer from ID scan, ask about loyalty
+  if (status === 'NEW_CUSTOMER_LOYALTY_PROMPT' && scannedInfo) {
+    return (
+      <div className="text-center w-full max-w-2xl bg-zinc-900/50 p-12 rounded-3xl border border-zinc-800 shadow-xl">
+        <div className="text-8xl mb-6">🎁</div>
+        <h2 className="text-4xl font-craft font-bold mb-4 text-gold uppercase tracking-wider">
+          Welcome, {scannedInfo.firstName}!
+        </h2>
+        <p className="text-xl text-white mb-2">
+          Would you like to join our <span className="text-gold font-bold">Loyalty Program</span>?
+        </p>
+        <p className="text-zinc-400 mb-6 text-sm">
+          Earn points on every purchase and get exclusive rewards!
+        </p>
+
+        {/* Show scanned info */}
+        <div className="mb-8 p-4 rounded-xl bg-zinc-800/50 border border-zinc-700">
+          <div className="grid grid-cols-2 gap-2 text-left text-lg">
+            <span className="text-zinc-400">DOB:</span>
+            <span className="text-white">{formatDOB(scannedInfo.dateOfBirth || '')}</span>
+            <span className="text-zinc-400">Age:</span>
+            <span className="text-green-400 font-bold">{scannedInfo.age} years old ✓</span>
+          </div>
+        </div>
+
+        <div className="flex gap-4">
+          <button
+            onClick={newCustomerSkipLoyalty}
+            className="flex-1 p-6 rounded-xl text-xl font-craft bg-zinc-800 text-white hover:bg-zinc-700 transition-all"
+          >
+            No Thanks
+          </button>
+          <button
+            onClick={newCustomerLoyaltySignup}
+            className="flex-1 p-6 rounded-xl text-xl font-craft font-bold bg-gold text-black hover:bg-[#d8c19d] transition-all"
+          >
+            Yes, Sign Me Up!
+          </button>
+        </div>
+
+        {/* Hidden input to maintain scanner focus */}
+        <input
+          ref={inputRef}
+          type="text"
+          className="opacity-0 absolute -left-[9999px]"
+          onChange={handleScanInput}
+          onKeyDown={(e) => { if (e.altKey || (e.ctrlKey && e.key === 'm')) e.preventDefault(); }}
+          autoComplete="off"
+        />
+      </div>
+    );
+  }
+
+  // NEW_CUSTOMER_EMAIL state - New customer entering email for loyalty signup
+  if (status === 'NEW_CUSTOMER_EMAIL' && scannedInfo) {
+    return (
+      <div className="text-center w-full max-w-2xl bg-zinc-900/50 p-10 rounded-3xl border border-zinc-800 shadow-xl">
+        <h2 className="text-3xl font-craft font-bold mb-2 text-gold uppercase tracking-wider">
+          Almost Done, {scannedInfo.firstName}!
+        </h2>
+        <p className="text-zinc-400 mb-6">
+          Enter your email to complete your loyalty signup
+        </p>
+
+        <TouchKeyboard
+          value={email}
+          onChange={setEmail}
+          onSubmit={newCustomerSubmitEmail}
+          placeholder="your@email.com"
+          type="email"
+        />
+
+        <button
+          onClick={() => setStatus('NEW_CUSTOMER_LOYALTY_PROMPT')}
+          className="mt-6 text-zinc-500 text-sm hover:text-zinc-300 transition-colors"
+        >
+          ← Back
+        </button>
       </div>
     );
   }
