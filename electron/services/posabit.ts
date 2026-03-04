@@ -231,6 +231,71 @@ export class PosabitService {
     return result.customer || result;
   }
 
+  // Search for a customer by name via the API (for when local DB doesn't have them)
+  async searchCustomerByName(firstName: string, lastName: string): Promise<PosabitCustomer | null> {
+    try {
+      // Use ransack query parameters (POSaBIT uses Rails/Ransack)
+      const params = new URLSearchParams({
+        per_page: '5',
+        'q[first_name_cont]': firstName,
+        'q[last_name_cont]': lastName,
+      });
+
+      const url = `${BASE_URL}/venue/customers?${params.toString()}`;
+      console.log('API name search URL:', url);
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': this.authHeader,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        console.log('API name search failed:', response.status);
+        return null;
+      }
+
+      const data = await response.json() as CustomerResponse;
+      if (!data.customers || data.customers.length === 0) {
+        console.log('API name search: no results');
+        return null;
+      }
+
+      // Unwrap if wrapped in { customer: {...} }
+      const unwrapped = data.customers.map((item: any) =>
+        item.customer ? item.customer : item
+      );
+
+      // Find best match (case-insensitive exact match on both names)
+      const normalizedFirst = firstName.trim().toUpperCase();
+      const normalizedLast = lastName.trim().toUpperCase();
+
+      const exactMatch = unwrapped.find((c: PosabitCustomer) =>
+        c.first_name?.toUpperCase() === normalizedFirst &&
+        c.last_name?.toUpperCase() === normalizedLast
+      );
+
+      if (exactMatch) {
+        console.log('API name search: exact match found -', exactMatch.first_name, exactMatch.last_name, 'ID:', exactMatch.id);
+        return exactMatch;
+      }
+
+      // Fallback: first result if names are close enough
+      const firstResult = unwrapped[0];
+      if (firstResult) {
+        console.log('API name search: using first result -', firstResult.first_name, firstResult.last_name, 'ID:', firstResult.id);
+        return firstResult;
+      }
+
+      return null;
+    } catch (err) {
+      console.error('API name search error:', err);
+      return null;
+    }
+  }
+
   // Update existing customer (e.g., to enable loyalty)
   async updateCustomer(customerId: number, data: {
     loyaltyMember?: boolean;

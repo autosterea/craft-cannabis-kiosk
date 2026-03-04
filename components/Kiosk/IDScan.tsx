@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Customer } from '../../types';
-import { lookupCustomerByName, updateCustomer, createCustomer, KioskCustomer } from '../../services/kioskApi';
+import { lookupCustomerByName, lookupCustomer, updateCustomer, createCustomer, KioskCustomer } from '../../services/kioskApi';
 import TouchKeyboard from './TouchKeyboard';
 
 interface IDScanProps {
@@ -215,11 +215,12 @@ const parseDriversLicense = (scanData: string): ParsedLicense | null => {
 };
 
 const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
-  const [status, setStatus] = useState<'READY' | 'SCANNING' | 'FOUND' | 'LOYALTY_PROMPT' | 'EMAIL_ENTRY' | 'UPDATING_LOYALTY' | 'SUCCESS' | 'UNDERAGE' | 'INVALID_SCAN' | 'NEW_CUSTOMER_LOYALTY_PROMPT' | 'NEW_CUSTOMER_EMAIL'>('READY');
+  const [status, setStatus] = useState<'READY' | 'SCANNING' | 'FOUND' | 'LOYALTY_PROMPT' | 'EMAIL_ENTRY' | 'UPDATING_LOYALTY' | 'SUCCESS' | 'UNDERAGE' | 'INVALID_SCAN' | 'NEW_CUSTOMER_LOYALTY_PROMPT' | 'NEW_CUSTOMER_EMAIL' | 'LINK_ACCOUNT_PHONE' | 'LINK_ACCOUNT_SEARCHING' | 'LINK_ACCOUNT_FOUND' | 'LINK_ACCOUNT_NOT_FOUND'>('READY');
   const [scanBuffer, setScanBuffer] = useState('');
   const [scannedInfo, setScannedInfo] = useState<ParsedLicense | null>(null);
   const [foundCustomer, setFoundCustomer] = useState<KioskCustomer | null>(null);
   const [email, setEmail] = useState('');
+  const [linkPhone, setLinkPhone] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const bufferTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -466,6 +467,88 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
       resetScan();
       newCustomerSkipLoyalty();
     }
+  };
+
+  // Link Account - show phone entry
+  const startLinkAccount = () => {
+    setLinkPhone('');
+    setStatus('LINK_ACCOUNT_PHONE');
+  };
+
+  // Link Account - phone number helpers
+  const linkPhoneAppend = (digit: string) => {
+    if (linkPhone.length < 10) setLinkPhone(prev => prev + digit);
+  };
+  const linkPhoneClear = () => setLinkPhone('');
+  const linkPhoneBackspace = () => setLinkPhone(prev => prev.slice(0, -1));
+
+  const formatPhone = (val: string) => {
+    if (!val) return '(___) ___-____';
+    const cleaned = val.replace(/\D/g, '');
+    let formatted = '(' + cleaned.substring(0, 3);
+    if (cleaned.length > 3) formatted += ') ' + cleaned.substring(3, 6);
+    if (cleaned.length > 6) formatted += '-' + cleaned.substring(6, 10);
+    return formatted;
+  };
+
+  // Link Account - submit phone and search
+  const linkAccountSubmitPhone = async () => {
+    if (linkPhone.length < 10) return;
+
+    setStatus('LINK_ACCOUNT_SEARCHING');
+
+    try {
+      const result = await lookupCustomer(linkPhone);
+
+      if (result.found && result.customer) {
+        setFoundCustomer(result.customer);
+        setStatus('LINK_ACCOUNT_FOUND');
+      } else {
+        setStatus('LINK_ACCOUNT_NOT_FOUND');
+      }
+    } catch (error) {
+      console.error('Phone lookup for link failed:', error);
+      setStatus('LINK_ACCOUNT_NOT_FOUND');
+    }
+  };
+
+  // Link Account - confirm and update demographics from DL
+  const confirmLinkAccount = async () => {
+    if (!foundCustomer || !scannedInfo) return;
+
+    const customerData = {
+      name: foundCustomer.first_name,
+      lastNameInitial: foundCustomer.last_name?.[0]?.toUpperCase() || '',
+      method: 'ID_SCAN' as const,
+      loyaltyStatus: foundCustomer.loyalty_member ? 'Member' as const : 'Guest' as const,
+      customerId: foundCustomer.id,
+      driversLicense: scannedInfo.licenseNumber,
+      dateOfBirth: scannedInfo.dateOfBirth,
+      age: scannedInfo.age,
+    };
+
+    // Update customer with DL demographics
+    try {
+      await updateCustomer(foundCustomer.id, {
+        address1: scannedInfo.address,
+        city: scannedInfo.city,
+        state: scannedInfo.state,
+        zipCode: scannedInfo.zipCode,
+        dateOfBirth: scannedInfo.dateOfBirth,
+        gender: scannedInfo.gender,
+      });
+      console.log('Linked account: updated demographics for customer', foundCustomer.id);
+    } catch (error) {
+      console.error('Failed to update demographics during link:', error);
+    }
+
+    // Reset and complete
+    setScannedInfo(null);
+    setFoundCustomer(null);
+    setLinkPhone('');
+    setStatus('READY');
+    resetScan();
+    onComplete(customerData);
   };
 
   // Confirm found customer (called when user clicks "That's Me!" or "Check In")
@@ -789,15 +872,12 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
   if (status === 'NEW_CUSTOMER_LOYALTY_PROMPT' && scannedInfo) {
     return (
       <div className="text-center w-full max-w-2xl bg-zinc-900/50 p-12 rounded-3xl border border-zinc-800 shadow-xl">
-        <div className="text-8xl mb-6">🎁</div>
+        <div className="text-7xl mb-6">👋</div>
         <h2 className="text-4xl font-craft font-bold mb-4 text-gold uppercase tracking-wider">
           Welcome, {scannedInfo.firstName}!
         </h2>
-        <p className="text-xl text-white mb-2">
-          Would you like to join our <span className="text-gold font-bold">Loyalty Program</span>?
-        </p>
-        <p className="text-zinc-400 mb-6 text-sm">
-          Earn points on every purchase and get exclusive rewards!
+        <p className="text-xl text-white mb-6">
+          What would you like to do?
         </p>
 
         {/* Show scanned info */}
@@ -810,18 +890,27 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
           </div>
         </div>
 
-        <div className="flex gap-4">
+        <div className="flex gap-3">
           <button
             onClick={newCustomerSkipLoyalty}
-            className="flex-1 p-6 rounded-xl text-xl font-craft bg-zinc-800 text-white hover:bg-zinc-700 transition-all"
+            className="flex-1 p-5 rounded-xl text-lg font-craft bg-zinc-800 text-white hover:bg-zinc-700 transition-all"
           >
-            No Thanks
+            <div className="text-2xl mb-1">✓</div>
+            Just Check In
+          </button>
+          <button
+            onClick={startLinkAccount}
+            className="flex-1 p-5 rounded-xl text-lg font-craft bg-blue-700 text-white hover:bg-blue-600 transition-all"
+          >
+            <div className="text-2xl mb-1">🔗</div>
+            Link Account
           </button>
           <button
             onClick={newCustomerLoyaltySignup}
-            className="flex-1 p-6 rounded-xl text-xl font-craft font-bold bg-gold text-black hover:bg-[#d8c19d] transition-all"
+            className="flex-1 p-5 rounded-xl text-lg font-craft font-bold bg-gold text-black hover:bg-[#d8c19d] transition-all"
           >
-            Yes, Sign Me Up!
+            <div className="text-2xl mb-1">⭐</div>
+            Sign Up for Loyalty
           </button>
         </div>
 
@@ -863,6 +952,193 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
         >
           ← Back
         </button>
+      </div>
+    );
+  }
+
+  // LINK_ACCOUNT_PHONE state - Enter phone to find existing account
+  if (status === 'LINK_ACCOUNT_PHONE' && scannedInfo) {
+    return (
+      <div className="text-center w-full max-w-xl bg-zinc-900/50 p-10 rounded-3xl border border-zinc-800 shadow-xl">
+        <h2 className="text-3xl font-craft font-bold mb-2 text-gold uppercase tracking-wider">
+          Link Your Account
+        </h2>
+        <p className="text-zinc-400 mb-6">
+          Enter the phone number on your account
+        </p>
+
+        <div className="text-4xl font-mono text-gold mb-6 tracking-wider">
+          {formatPhone(linkPhone)}
+        </div>
+
+        {/* Numpad */}
+        <div className="grid grid-cols-3 gap-3 max-w-xs mx-auto mb-6">
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9, null, 0, '←'].map((key, i) => (
+            key === null ? <div key={i} /> : (
+              <button
+                key={i}
+                onClick={() => {
+                  if (key === '←') linkPhoneBackspace();
+                  else linkPhoneAppend(key.toString());
+                }}
+                className={`h-16 text-2xl font-craft flex items-center justify-center rounded-xl transition-all active:scale-95 ${
+                  key === '←' ? 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600' : 'bg-zinc-800 text-white hover:bg-zinc-700'
+                }`}
+              >
+                {key}
+              </button>
+            )
+          ))}
+        </div>
+
+        <div className="flex gap-3">
+          <button
+            onClick={linkPhoneClear}
+            className="flex-1 p-4 rounded-xl text-lg font-craft bg-zinc-800 text-zinc-400 hover:bg-zinc-700 transition-all"
+          >
+            Clear
+          </button>
+          <button
+            onClick={linkAccountSubmitPhone}
+            disabled={linkPhone.length < 10}
+            className={`flex-1 p-4 rounded-xl text-lg font-craft font-bold transition-all ${
+              linkPhone.length >= 10
+                ? 'bg-gold text-black hover:bg-[#d8c19d]'
+                : 'bg-zinc-800 text-zinc-600 cursor-not-allowed'
+            }`}
+          >
+            Search
+          </button>
+        </div>
+
+        <button
+          onClick={() => setStatus('NEW_CUSTOMER_LOYALTY_PROMPT')}
+          className="mt-6 text-zinc-500 text-sm hover:text-zinc-300 transition-colors"
+        >
+          ← Back
+        </button>
+
+        {/* Hidden input to maintain scanner focus */}
+        <input
+          ref={inputRef}
+          type="text"
+          className="opacity-0 absolute -left-[9999px]"
+          onChange={handleScanInput}
+          onKeyDown={(e) => { if (e.altKey || (e.ctrlKey && e.key === 'm')) e.preventDefault(); }}
+          autoComplete="off"
+        />
+      </div>
+    );
+  }
+
+  // LINK_ACCOUNT_SEARCHING state
+  if (status === 'LINK_ACCOUNT_SEARCHING') {
+    return (
+      <div className="text-center w-full max-w-2xl bg-zinc-900/50 p-12 rounded-3xl border border-zinc-800 shadow-xl">
+        <div className="animate-spin w-16 h-16 border-4 border-gold border-t-transparent rounded-full mx-auto mb-6"></div>
+        <h2 className="text-4xl font-craft font-bold mb-4 text-gold uppercase tracking-wider">
+          Searching...
+        </h2>
+        <p className="text-zinc-400">Looking up {formatPhone(linkPhone)}</p>
+      </div>
+    );
+  }
+
+  // LINK_ACCOUNT_FOUND state - Account found, confirm linking
+  if (status === 'LINK_ACCOUNT_FOUND' && foundCustomer && scannedInfo) {
+    return (
+      <div className="text-center w-full max-w-2xl bg-zinc-900/50 p-12 rounded-3xl border border-zinc-800 shadow-xl">
+        <div className="text-8xl mb-6">✅</div>
+        <h2 className="text-4xl font-craft font-bold mb-4 text-gold uppercase tracking-wider">
+          Account Found!
+        </h2>
+        <p className="text-2xl text-white mb-2">
+          {foundCustomer.first_name} {foundCustomer.last_name?.[0] || ''}.
+        </p>
+        {foundCustomer.loyalty_member && (
+          <p className="text-gold text-lg mb-4">Loyalty Member</p>
+        )}
+
+        <div className="mb-8 p-4 rounded-xl bg-green-900/30 border border-green-700">
+          <p className="text-green-400 text-sm">
+            Your ID will be linked to this account
+          </p>
+        </div>
+
+        <div className="flex gap-4">
+          <button
+            onClick={() => {
+              setFoundCustomer(null);
+              setLinkPhone('');
+              setStatus('LINK_ACCOUNT_PHONE');
+            }}
+            className="flex-1 p-6 rounded-xl text-xl font-craft bg-zinc-800 text-white hover:bg-zinc-700 transition-all"
+          >
+            Not Me
+          </button>
+          <button
+            onClick={confirmLinkAccount}
+            className="flex-1 p-6 rounded-xl text-xl font-craft font-bold bg-gold text-black hover:bg-[#d8c19d] transition-all"
+          >
+            That's Me — Check In
+          </button>
+        </div>
+
+        {/* Hidden input to maintain scanner focus */}
+        <input
+          ref={inputRef}
+          type="text"
+          className="opacity-0 absolute -left-[9999px]"
+          onChange={handleScanInput}
+          onKeyDown={(e) => { if (e.altKey || (e.ctrlKey && e.key === 'm')) e.preventDefault(); }}
+          autoComplete="off"
+        />
+      </div>
+    );
+  }
+
+  // LINK_ACCOUNT_NOT_FOUND state
+  if (status === 'LINK_ACCOUNT_NOT_FOUND' && scannedInfo) {
+    return (
+      <div className="text-center w-full max-w-2xl bg-zinc-900/50 p-12 rounded-3xl border border-zinc-800 shadow-xl">
+        <div className="text-8xl mb-6">🔍</div>
+        <h2 className="text-3xl font-craft font-bold mb-4 text-orange-400 uppercase tracking-wider">
+          No Account Found
+        </h2>
+        <p className="text-zinc-400 mb-2">
+          No account found for {formatPhone(linkPhone)}
+        </p>
+        <p className="text-zinc-500 text-sm mb-8">
+          Try a different number or continue as a new customer
+        </p>
+
+        <div className="flex gap-4">
+          <button
+            onClick={() => {
+              setLinkPhone('');
+              setStatus('LINK_ACCOUNT_PHONE');
+            }}
+            className="flex-1 p-6 rounded-xl text-xl font-craft bg-zinc-800 text-white hover:bg-zinc-700 transition-all"
+          >
+            Try Again
+          </button>
+          <button
+            onClick={() => setStatus('NEW_CUSTOMER_LOYALTY_PROMPT')}
+            className="flex-1 p-6 rounded-xl text-xl font-craft font-bold bg-gold text-black hover:bg-[#d8c19d] transition-all"
+          >
+            Continue
+          </button>
+        </div>
+
+        {/* Hidden input to maintain scanner focus */}
+        <input
+          ref={inputRef}
+          type="text"
+          className="opacity-0 absolute -left-[9999px]"
+          onChange={handleScanInput}
+          onKeyDown={(e) => { if (e.altKey || (e.ctrlKey && e.key === 'm')) e.preventDefault(); }}
+          autoComplete="off"
+        />
       </div>
     );
   }

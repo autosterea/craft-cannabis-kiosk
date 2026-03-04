@@ -200,7 +200,7 @@ function setupIpcHandlers() {
     return customer ? { found: true, customer } : { found: false };
   });
 
-  // Customer lookup by name (from local SQLite) - for ID scan
+  // Customer lookup by name (local SQLite first, then POSaBIT API fallback) - for ID scan
   ipcMain.handle('lookup-customer-by-name', async (_event, firstName: string, lastName: string) => {
     const venueId = store.get('selectedVenue') as string;
     console.log('Looking up customer by name:', firstName, lastName, 'in venue:', venueId);
@@ -210,10 +210,31 @@ function setupIpcHandlers() {
       return { found: false };
     }
 
+    // Strategy 1: Local SQLite database (fast)
     const customer = getCustomerByName(firstName, lastName, venueId);
-    console.log('Name lookup result:', customer ? `Found: ${customer.first_name} ${customer.last_name} (ID: ${customer.id})` : 'Not found');
+    if (customer) {
+      console.log('Local DB match:', customer.first_name, customer.last_name, '(ID:', customer.id, ')');
+      return { found: true, customer };
+    }
 
-    return customer ? { found: true, customer } : { found: false };
+    // Strategy 2: POSaBIT API fallback (slower but comprehensive)
+    if (posabitService) {
+      console.log('Local DB miss — trying POSaBIT API for:', firstName, lastName);
+      try {
+        const apiCustomer = await posabitService.searchCustomerByName(firstName, lastName);
+        if (apiCustomer) {
+          console.log('API match:', apiCustomer.first_name, apiCustomer.last_name, '(ID:', apiCustomer.id, ')');
+          // Cache in local DB for future lookups
+          upsertCustomers([apiCustomer], venueId);
+          return { found: true, customer: apiCustomer };
+        }
+      } catch (err) {
+        console.error('API name lookup failed:', err);
+      }
+    }
+
+    console.log('Customer not found anywhere:', firstName, lastName);
+    return { found: false };
   });
 
   // Create customer in POSaBIT

@@ -174,29 +174,68 @@ export async function addToQueue(data: {
 export async function checkForOnlineOrder(customerName: string, customerId?: number): Promise<QueueItem | null> {
   try {
     const response = await getQueue();
-    if (!response?.customer_queues) return null;
+    if (!response?.customer_queues) {
+      console.log('[OnlineOrder] No queue data returned');
+      return null;
+    }
+
+    // Unwrap queue items if wrapped in { customer_queue: {...} } (POSaBIT wraps objects)
+    const queueItems: QueueItem[] = response.customer_queues.map((item: any) =>
+      item.customer_queue ? item.customer_queue : item
+    );
+
+    console.log('[OnlineOrder] Queue has', queueItems.length, 'items. Looking for online orders...');
 
     // Only check open/processing order_ahead entries
-    const onlineOrders = response.customer_queues.filter(
+    const onlineOrders = queueItems.filter(
       q => q.source === 'order_ahead' && (q.aasm_state === 'open' || q.aasm_state === 'processing')
     );
+
+    console.log('[OnlineOrder] Found', onlineOrders.length, 'pending online orders:',
+      onlineOrders.map(q => `${q.name} (ID:${q.customer_id}, state:${q.aasm_state})`).join(', ')
+    );
+
+    if (onlineOrders.length === 0) return null;
 
     // Match by customer_id first (most reliable)
     if (customerId) {
       const match = onlineOrders.find(q => q.customer_id === customerId);
-      if (match) return match;
+      if (match) {
+        console.log('[OnlineOrder] Matched by customer_id:', customerId);
+        return match;
+      }
     }
 
-    // Fallback: match by name (case-insensitive)
-    const normalizedName = customerName.trim().toUpperCase();
+    // Fallback: match by first name + last initial
+    // customerName is typically "FirstName L" (first name + last initial from kiosk)
+    // Queue name is typically "FirstName LastName" (full name from POSaBIT)
+    const nameParts = customerName.trim().toUpperCase().split(/\s+/);
+    const firstName = nameParts[0] || '';
+    const lastInitial = nameParts[1]?.[0] || ''; // Just the first character
+
+    console.log('[OnlineOrder] Name matching: firstName=', firstName, 'lastInitial=', lastInitial);
+
     const nameMatch = onlineOrders.find(q => {
-      const queueName = q.name.trim().toUpperCase();
-      return queueName === normalizedName || queueName.startsWith(normalizedName + ' ');
+      const queueParts = q.name.trim().toUpperCase().split(/\s+/);
+      const queueFirst = queueParts[0] || '';
+      const queueLastInitial = queueParts.length > 1 ? queueParts[queueParts.length - 1][0] : '';
+
+      // Match first name exactly, and last initial if we have both
+      const firstMatch = queueFirst === firstName;
+      const lastMatch = !lastInitial || !queueLastInitial || lastInitial === queueLastInitial;
+
+      return firstMatch && lastMatch;
     });
+
+    if (nameMatch) {
+      console.log('[OnlineOrder] Matched by name:', nameMatch.name);
+    } else {
+      console.log('[OnlineOrder] No name match found for:', customerName);
+    }
 
     return nameMatch || null;
   } catch (err) {
-    console.error('Failed to check for online orders:', err);
+    console.error('[OnlineOrder] Failed to check for online orders:', err);
     return null;
   }
 }
