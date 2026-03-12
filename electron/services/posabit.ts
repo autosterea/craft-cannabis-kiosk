@@ -231,6 +231,50 @@ export class PosabitService {
     return result.customer || result;
   }
 
+  // Search for a customer by driver's license number via the API
+  async searchCustomerByLicense(licenseNumber: string): Promise<PosabitCustomer | null> {
+    try {
+      const params = new URLSearchParams({
+        per_page: '5',
+        'q[drivers_license_eq]': licenseNumber.trim().toUpperCase(),
+      });
+
+      const url = `${BASE_URL}/venue/customers?${params.toString()}`;
+      console.log('API DL search URL:', url);
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': this.authHeader,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        console.log('API DL search failed:', response.status);
+        return null;
+      }
+
+      const data = await response.json() as CustomerResponse;
+      if (!data.customers || data.customers.length === 0) {
+        console.log('API DL search: no results');
+        return null;
+      }
+
+      // Unwrap if wrapped
+      const unwrapped = data.customers.map((item: any) =>
+        item.customer ? item.customer : item
+      );
+
+      const match = unwrapped[0];
+      console.log('API DL search: found -', match.first_name, match.last_name, 'ID:', match.id);
+      return match;
+    } catch (err) {
+      console.error('API DL search error:', err);
+      return null;
+    }
+  }
+
   // Search for a customer by name via the API (for when local DB doesn't have them)
   async searchCustomerByName(firstName: string, lastName: string): Promise<PosabitCustomer | null> {
     try {

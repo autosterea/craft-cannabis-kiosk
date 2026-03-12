@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Customer } from '../../types';
-import { lookupCustomerByName, lookupCustomer, updateCustomer, createCustomer, KioskCustomer } from '../../services/kioskApi';
+import { lookupCustomerByName, lookupCustomerByLicense, lookupCustomer, updateCustomer, createCustomer, KioskCustomer } from '../../services/kioskApi';
 import TouchKeyboard from './TouchKeyboard';
 
 interface IDScanProps {
@@ -345,15 +345,26 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
       return;
     }
 
-    // Age verified - look up customer by name
+    // Age verified - look up customer by DL number first (most reliable), then fall back to name
     try {
-      const result = await lookupCustomerByName(firstName, lastName);
+      // Strategy 1: Search by driver's license number (unique identifier)
+      if (parsed.licenseNumber) {
+        console.log('Looking up customer by DL number:', parsed.licenseNumber);
+        const dlResult = await lookupCustomerByLicense(parsed.licenseNumber);
+        if (dlResult.found && dlResult.customer) {
+          console.log('Customer found by DL number:', dlResult.customer.first_name, dlResult.customer.last_name);
+          setFoundCustomer(dlResult.customer);
+          setStatus('FOUND');
+          return;
+        }
+      }
 
+      // Strategy 2: Fall back to name search
+      console.log('DL lookup miss — trying name search:', firstName, lastName);
+      const result = await lookupCustomerByName(firstName, lastName);
       if (result.found && result.customer) {
-        // Customer found in database!
         setFoundCustomer(result.customer);
         setStatus('FOUND');
-        // Don't auto-proceed - wait for user confirmation
         return;
       }
     } catch (error) {

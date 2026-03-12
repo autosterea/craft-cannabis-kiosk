@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('kiosk', {
   // Customer operations
   lookupCustomer: (phone) => ipcRenderer.invoke('lookup-customer', phone),
   lookupCustomerByName: (firstName, lastName) => ipcRenderer.invoke('lookup-customer-by-name', firstName, lastName),
+  lookupCustomerByLicense: (licenseNumber) => ipcRenderer.invoke('lookup-customer-by-license', licenseNumber),
   createCustomer: (data) => ipcRenderer.invoke('create-customer', data),
   updateCustomer: (customerId, data) => ipcRenderer.invoke('update-customer', customerId, data),
 

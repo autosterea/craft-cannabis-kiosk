@@ -102,6 +102,15 @@ export async function lookupCustomerByName(firstName: string, lastName: string):
   return { found: false };
 }
 
+export async function lookupCustomerByLicense(licenseNumber: string): Promise<{ found: boolean; customer?: KioskCustomer }> {
+  if (isElectron()) {
+    return window.kiosk.lookupCustomerByLicense(licenseNumber);
+  }
+
+  // Web fallback - not supported
+  return { found: false };
+}
+
 export async function createCustomer(data: {
   firstName: string;
   lastName?: string;

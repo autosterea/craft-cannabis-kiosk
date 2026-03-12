@@ -60,6 +60,7 @@ export function initDatabase(): void {
       telephone TEXT,
       email TEXT,
       loyalty_member INTEGER DEFAULT 0,
+      drivers_license TEXT,
       venue_id TEXT NOT NULL,
       synced_at TEXT NOT NULL,
       UNIQUE(id, venue_id)
@@ -67,7 +68,20 @@ export function initDatabase(): void {
 
     CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(telephone);
     CREATE INDEX IF NOT EXISTS idx_customers_venue ON customers(venue_id);
+    CREATE INDEX IF NOT EXISTS idx_customers_dl ON customers(drivers_license);
   `);
+
+  // Migration: add drivers_license column if missing (existing installs)
+  try {
+    db.exec(`ALTER TABLE customers ADD COLUMN drivers_license TEXT`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_customers_dl ON customers(drivers_license)`);
+    console.log('Migration: added drivers_license column');
+  } catch (e: any) {
+    // Column already exists — ignore
+    if (!e.message?.includes('duplicate column')) {
+      console.error('Migration error:', e);
+    }
+  }
 
   // Create offline queue table
   db.exec(`
@@ -126,8 +140,8 @@ export function upsertCustomers(customers: any[], venueId: string): number {
   const syncedAt = new Date().toISOString();
 
   const stmt = db.prepare(`
-    INSERT OR REPLACE INTO customers (id, first_name, last_name, telephone, email, loyalty_member, venue_id, synced_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR REPLACE INTO customers (id, first_name, last_name, telephone, email, loyalty_member, drivers_license, venue_id, synced_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertMany = db.transaction((items: any[]) => {
@@ -143,6 +157,7 @@ export function upsertCustomers(customers: any[], venueId: string): number {
         normalizedTelephone,
         customer.email || null,
         customer.loyalty_member ? 1 : 0,
+        customer.drivers_license || null,
         venueId,
         syncedAt
       );
@@ -221,6 +236,27 @@ export function getCustomersWithPhoneCount(): { total: number; withPhone: number
   const withPhone = (phoneStmt.get() as { count: number }).count;
 
   return { total, withPhone };
+}
+
+// Search customer by driver's license number
+export function getCustomerByLicense(licenseNumber: string, venueId: string): DbCustomer | null {
+  if (!db) throw new Error('Database not initialized');
+  if (!licenseNumber) return null;
+
+  const normalized = licenseNumber.trim().toUpperCase();
+  console.log('Searching for customer by DL:', normalized, 'venue:', venueId);
+
+  const result = db.prepare(
+    `SELECT * FROM customers WHERE UPPER(drivers_license) = ? AND venue_id = ? LIMIT 1`
+  ).get(normalized, venueId) as DbCustomer | undefined;
+
+  if (result) {
+    console.log('Found customer by DL:', result.first_name, result.last_name, 'ID:', result.id);
+  } else {
+    console.log('No customer found with DL:', normalized);
+  }
+
+  return result || null;
 }
 
 // Search customer by first name and last name (multi-strategy matching)

@@ -114,6 +114,7 @@ declare global {
       debugDbInfo: () => Promise<any>;
       // Auto-update
       lookupCustomerByName: (firstName: string, lastName: string) => Promise<{ found: boolean; customer?: KioskCustomer }>;
+      lookupCustomerByLicense: (licenseNumber: string) => Promise<{ found: boolean; customer?: KioskCustomer }>;
       updateCustomer: (customerId: number, data: any) => Promise<KioskCustomer>;
       checkForUpdates: () => Promise<any>;
       installUpdate: () => Promise<void>;

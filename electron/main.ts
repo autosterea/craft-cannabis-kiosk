@@ -5,7 +5,7 @@ import Store from 'electron-store';
 import pkg from 'electron-updater';
 const { autoUpdater } = pkg;
 import { getVenueList, getVenueById, INTEGRATOR_TOKEN, Venue } from './config/venues.js';
-import { initDatabase, getCustomerByPhone, getCustomerByName, upsertCustomers, addOfflineQueueEntry, getUnsyncedEntries, markEntrySynced, getTotalCustomerCount, searchCustomerByPhoneGlobal, getVenueIdsInDb, getSampleCustomers, getCustomersWithPhoneCount } from './services/database.js';
+import { initDatabase, getCustomerByPhone, getCustomerByName, getCustomerByLicense, upsertCustomers, addOfflineQueueEntry, getUnsyncedEntries, markEntrySynced, getTotalCustomerCount, searchCustomerByPhoneGlobal, getVenueIdsInDb, getSampleCustomers, getCustomersWithPhoneCount } from './services/database.js';
 import { SyncService } from './services/sync.js';
 import { PosabitService } from './services/posabit.js';
 
@@ -198,6 +198,42 @@ function setupIpcHandlers() {
     console.log('Lookup result:', customer ? `Found: ${customer.first_name} ${customer.last_name}` : 'Not found');
 
     return customer ? { found: true, customer } : { found: false };
+  });
+
+  // Customer lookup by driver's license number (local SQLite first, then POSaBIT API fallback)
+  ipcMain.handle('lookup-customer-by-license', async (_event, licenseNumber: string) => {
+    const venueId = store.get('selectedVenue') as string;
+    console.log('Looking up customer by DL:', licenseNumber, 'in venue:', venueId);
+
+    if (!venueId || !licenseNumber) {
+      return { found: false };
+    }
+
+    // Strategy 1: Local SQLite database (fast)
+    const customer = getCustomerByLicense(licenseNumber, venueId);
+    if (customer) {
+      console.log('Local DB DL match:', customer.first_name, customer.last_name, '(ID:', customer.id, ')');
+      return { found: true, customer };
+    }
+
+    // Strategy 2: POSaBIT API fallback
+    if (posabitService) {
+      console.log('Local DB DL miss — trying POSaBIT API for DL:', licenseNumber);
+      try {
+        const apiCustomer = await posabitService.searchCustomerByLicense(licenseNumber);
+        if (apiCustomer) {
+          console.log('API DL match:', apiCustomer.first_name, apiCustomer.last_name, '(ID:', apiCustomer.id, ')');
+          // Cache in local DB for future lookups
+          upsertCustomers([apiCustomer], venueId);
+          return { found: true, customer: apiCustomer };
+        }
+      } catch (err) {
+        console.error('API DL lookup failed:', err);
+      }
+    }
+
+    console.log('Customer not found by DL:', licenseNumber);
+    return { found: false };
   });
 
   // Customer lookup by name (local SQLite first, then POSaBIT API fallback) - for ID scan
