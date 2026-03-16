@@ -913,8 +913,8 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
             onClick={startLinkAccount}
             className="flex-1 p-5 rounded-xl text-lg font-craft bg-blue-700 text-white hover:bg-blue-600 transition-all"
           >
-            <div className="text-2xl mb-1">🔗</div>
-            Link Account
+            <div className="text-2xl mb-1">📱</div>
+            Already Have an Account?
           </button>
           <button
             onClick={newCustomerLoyaltySignup}
