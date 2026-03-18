@@ -68,7 +68,6 @@ export function initDatabase(): void {
 
     CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(telephone);
     CREATE INDEX IF NOT EXISTS idx_customers_venue ON customers(venue_id);
-    CREATE INDEX IF NOT EXISTS idx_customers_dl ON customers(drivers_license);
   `);
 
   // Migration: add drivers_license column if missing (existing installs)
