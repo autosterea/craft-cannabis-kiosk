@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Customer } from '../../types';
-import { lookupCustomerByName, lookupCustomerByLicense, lookupCustomer, updateCustomer, createCustomer, KioskCustomer } from '../../services/kioskApi';
+import { lookupCustomerByName, lookupCustomerByLicense, lookupCustomer, fetchCustomerById, updateCustomer, createCustomer, KioskCustomer } from '../../services/kioskApi';
 import TouchKeyboard from './TouchKeyboard';
 
 interface IDScanProps {
@@ -215,12 +215,14 @@ const parseDriversLicense = (scanData: string): ParsedLicense | null => {
 };
 
 const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
-  const [status, setStatus] = useState<'READY' | 'SCANNING' | 'FOUND' | 'LOYALTY_PROMPT' | 'EMAIL_ENTRY' | 'UPDATING_LOYALTY' | 'SUCCESS' | 'UNDERAGE' | 'INVALID_SCAN' | 'NEW_CUSTOMER_LOYALTY_PROMPT' | 'NEW_CUSTOMER_EMAIL' | 'LINK_ACCOUNT_PHONE' | 'LINK_ACCOUNT_SEARCHING' | 'LINK_ACCOUNT_FOUND' | 'LINK_ACCOUNT_NOT_FOUND'>('READY');
+  const [status, setStatus] = useState<'READY' | 'SCANNING' | 'FOUND' | 'LOYALTY_PROMPT' | 'EMAIL_ENTRY' | 'UPDATING_LOYALTY' | 'SUCCESS' | 'UNDERAGE' | 'INVALID_SCAN' | 'NEW_CUSTOMER_LOYALTY_PROMPT' | 'NEW_CUSTOMER_EMAIL' | 'LINK_ACCOUNT_PHONE' | 'LINK_ACCOUNT_SEARCHING' | 'LINK_ACCOUNT_VERIFYING' | 'LINK_ACCOUNT_FOUND' | 'LINK_ACCOUNT_NOT_FOUND' | 'LINK_ACCOUNT_MISMATCH'>('READY');
   const [scanBuffer, setScanBuffer] = useState('');
   const [scannedInfo, setScannedInfo] = useState<ParsedLicense | null>(null);
   const [foundCustomer, setFoundCustomer] = useState<KioskCustomer | null>(null);
   const [email, setEmail] = useState('');
   const [linkPhone, setLinkPhone] = useState('');
+  const [managerPin, setManagerPin] = useState('');
+  const [pinError, setPinError] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const bufferTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -502,6 +504,66 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
     return formatted;
   };
 
+  // Compare DL scan data with account data to determine if auto-link is safe
+  const shouldAutoLink = (scan: ParsedLicense, customer: KioskCustomer): boolean => {
+    // Rule 1: If DL number matches the one on file → auto-link
+    if (scan.licenseNumber && customer.drivers_license) {
+      if (scan.licenseNumber.trim().toUpperCase() === customer.drivers_license.trim().toUpperCase()) {
+        console.log('Auto-link: DL number match');
+        return true;
+      }
+    }
+
+    // Convert MMDDYYYY to YYYY-MM-DD for comparison with API birthday format
+    const scanDobIso = scan.dateOfBirth && scan.dateOfBirth.length === 8
+      ? `${scan.dateOfBirth.substring(4, 8)}-${scan.dateOfBirth.substring(0, 2)}-${scan.dateOfBirth.substring(2, 4)}`
+      : null;
+
+    // Fuzzy name comparison (handles 1-2 char differences, prefix/nickname matching)
+    const namesClose = (a: string, b: string): boolean => {
+      const na = (a || '').trim().toUpperCase();
+      const nb = (b || '').trim().toUpperCase();
+      if (!na || !nb) return false;
+      if (na === nb) return true;
+      // One is prefix of other (Cam→Cameron, Rob→Robert)
+      if (na.length >= 3 && nb.length >= 3) {
+        if (na.startsWith(nb) || nb.startsWith(na)) return true;
+      }
+      // Simple edit distance check (off by 1-2 chars)
+      if (Math.abs(na.length - nb.length) <= 2) {
+        let mismatches = 0;
+        const maxLen = Math.max(na.length, nb.length);
+        for (let i = 0; i < maxLen; i++) {
+          if ((na[i] || '') !== (nb[i] || '')) mismatches++;
+          if (mismatches > 2) return false;
+        }
+        return true;
+      }
+      return false;
+    };
+
+    const lastNameClose = namesClose(scan.lastName, customer.last_name || '');
+    const firstNameClose = namesClose(scan.firstName, customer.first_name || '');
+
+    // Rule 2: DOB matches + last name close → auto-link (handles Cameron/Bruce Crowe)
+    if (scanDobIso && customer.birthday && scanDobIso === customer.birthday && lastNameClose) {
+      console.log('Auto-link: DOB match + last name close');
+      return true;
+    }
+
+    // Rule 3: Both first and last names are close → auto-link
+    if (firstNameClose && lastNameClose) {
+      console.log('Auto-link: Names close match');
+      return true;
+    }
+
+    console.log('Mismatch detected — requiring manager PIN.',
+      'Scan:', scan.firstName, scan.lastName,
+      'Account:', customer.first_name, customer.last_name,
+      'DOB match:', scanDobIso === customer.birthday);
+    return false;
+  };
+
   // Link Account - submit phone and search
   const linkAccountSubmitPhone = async () => {
     if (linkPhone.length < 10) return;
@@ -513,7 +575,29 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
 
       if (result.found && result.customer) {
         setFoundCustomer(result.customer);
-        setStatus('LINK_ACCOUNT_FOUND');
+
+        // Fetch full record from API to get birthday and drivers_license
+        setStatus('LINK_ACCOUNT_VERIFYING');
+        let fullCustomer = result.customer;
+
+        try {
+          const fullResult = await fetchCustomerById(result.customer.id);
+          if (fullResult.found && fullResult.customer) {
+            fullCustomer = fullResult.customer;
+            setFoundCustomer(fullCustomer);
+          }
+        } catch (err) {
+          console.error('Failed to fetch full customer record:', err);
+        }
+
+        // Compare DL scan data with account data
+        if (scannedInfo && shouldAutoLink(scannedInfo, fullCustomer)) {
+          setStatus('LINK_ACCOUNT_FOUND');
+        } else {
+          setManagerPin('');
+          setPinError(false);
+          setStatus('LINK_ACCOUNT_MISMATCH');
+        }
       } else {
         setStatus('LINK_ACCOUNT_NOT_FOUND');
       }
@@ -522,6 +606,29 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
       setStatus('LINK_ACCOUNT_NOT_FOUND');
     }
   };
+
+  // Manager PIN entry for account linking mismatch
+  const managerPinAppend = (digit: string) => {
+    if (managerPin.length < 4) {
+      const newPin = managerPin + digit;
+      setManagerPin(newPin);
+      setPinError(false);
+      // Auto-submit when 4 digits entered
+      if (newPin.length === 4) {
+        if (newPin === '0420') {
+          setStatus('LINK_ACCOUNT_FOUND');
+          setManagerPin('');
+        } else {
+          setPinError(true);
+          setTimeout(() => {
+            setManagerPin('');
+            setPinError(false);
+          }, 1000);
+        }
+      }
+    }
+  };
+  const managerPinClear = () => { setManagerPin(''); setPinError(false); };
 
   // Link Account - confirm and update demographics from DL
   const confirmLinkAccount = async () => {
@@ -1051,6 +1158,103 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
           Searching...
         </h2>
         <p className="text-zinc-400">Looking up {formatPhone(linkPhone)}</p>
+      </div>
+    );
+  }
+
+  // LINK_ACCOUNT_VERIFYING state - Fetching full customer record
+  if (status === 'LINK_ACCOUNT_VERIFYING') {
+    return (
+      <div className="text-center w-full max-w-2xl bg-zinc-900/50 p-12 rounded-3xl border border-zinc-800 shadow-xl">
+        <div className="animate-spin w-16 h-16 border-4 border-gold border-t-transparent rounded-full mx-auto mb-6"></div>
+        <h2 className="text-4xl font-craft font-bold mb-4 text-gold uppercase tracking-wider">
+          Verifying...
+        </h2>
+        <p className="text-zinc-400">Checking account details</p>
+      </div>
+    );
+  }
+
+  // LINK_ACCOUNT_MISMATCH state - Info doesn't match, require manager PIN
+  if (status === 'LINK_ACCOUNT_MISMATCH' && foundCustomer && scannedInfo) {
+    return (
+      <div className="text-center w-full max-w-xl bg-zinc-900/50 p-10 rounded-3xl border border-zinc-800 shadow-xl">
+        <div className="text-6xl mb-4">🔒</div>
+        <h2 className="text-3xl font-craft font-bold mb-3 text-orange-400 uppercase tracking-wider">
+          Verification Needed
+        </h2>
+        <p className="text-zinc-400 mb-4 text-sm">
+          The information on your ID doesn't match this account.
+          Please ask a team member to verify and enter their code.
+        </p>
+
+        {/* Comparison info */}
+        <div className="mb-5 p-3 rounded-xl bg-zinc-800/50 border border-zinc-700 text-sm">
+          <div className="grid grid-cols-3 gap-1 text-left">
+            <span className="text-zinc-500"></span>
+            <span className="text-zinc-400 text-center text-xs">ID Scan</span>
+            <span className="text-zinc-400 text-center text-xs">Account</span>
+            <span className="text-zinc-500">Name:</span>
+            <span className="text-white text-center">{scannedInfo.firstName} {scannedInfo.lastName?.[0] || ''}.</span>
+            <span className="text-white text-center">{foundCustomer.first_name} {foundCustomer.last_name?.[0] || ''}.</span>
+          </div>
+        </div>
+
+        <p className="text-zinc-500 text-xs mb-3">
+          Team member: enter PIN to approve
+        </p>
+
+        {/* PIN display */}
+        <div className={`text-4xl font-mono mb-3 tracking-[0.5em] ${pinError ? 'text-red-400' : 'text-gold'}`}>
+          {'●'.repeat(managerPin.length) + '○'.repeat(4 - managerPin.length)}
+        </div>
+
+        {pinError && (
+          <p className="text-red-400 text-sm mb-2">Incorrect PIN</p>
+        )}
+
+        {/* Numpad */}
+        <div className="grid grid-cols-3 gap-3 max-w-xs mx-auto mb-5">
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9, null, 0, '←'].map((key, i) => (
+            key === null ? <div key={i} /> : (
+              <button
+                key={i}
+                onClick={() => {
+                  if (key === '←') managerPinClear();
+                  else managerPinAppend(key.toString());
+                }}
+                className={`h-14 text-xl font-craft flex items-center justify-center rounded-xl transition-all active:scale-95 ${
+                  key === '←' ? 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600' : 'bg-zinc-800 text-white hover:bg-zinc-700'
+                }`}
+              >
+                {key}
+              </button>
+            )
+          ))}
+        </div>
+
+        <button
+          onClick={() => {
+            setFoundCustomer(null);
+            setManagerPin('');
+            setPinError(false);
+            setLinkPhone('');
+            setStatus('LINK_ACCOUNT_PHONE');
+          }}
+          className="text-zinc-500 text-sm hover:text-zinc-300 transition-colors"
+        >
+          ← Back
+        </button>
+
+        {/* Hidden input to maintain scanner focus */}
+        <input
+          ref={inputRef}
+          type="text"
+          className="opacity-0 absolute -left-[9999px]"
+          onChange={handleScanInput}
+          onKeyDown={(e) => { if (e.altKey || (e.ctrlKey && e.key === 'm')) e.preventDefault(); }}
+          autoComplete="off"
+        />
       </div>
     );
   }

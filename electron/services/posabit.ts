@@ -12,6 +12,15 @@ export interface PosabitCustomer {
   marketing_opt_in: boolean;
   created_at: string;
   updated_at: string;
+  // Extended fields returned by API (for account linking verification)
+  birthday?: string;          // "1990-07-23" format
+  drivers_license?: string;
+  birth_year?: number;
+  gender?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zipcode?: string;
 }
 
 export interface PosabitQueueItem {
@@ -418,5 +427,32 @@ export class PosabitService {
 
     const result = await response.json() as { customer?: PosabitCustomer } & PosabitCustomer;
     return result.customer || result;
+  }
+
+  // Fetch a single customer by ID (returns full record with birthday, drivers_license)
+  async fetchCustomerById(customerId: number): Promise<PosabitCustomer | null> {
+    try {
+      const response = await fetch(`${BASE_URL}/venue/customers/${customerId}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': this.authHeader,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        console.log('Fetch customer by ID failed:', response.status);
+        return null;
+      }
+
+      const data = await response.json() as { customer?: PosabitCustomer } & PosabitCustomer;
+      const customer = data.customer || data;
+      console.log('Fetched customer by ID:', customer.id, customer.first_name, customer.last_name,
+        'birthday:', customer.birthday, 'DL:', customer.drivers_license ? 'yes' : 'no');
+      return customer;
+    } catch (err) {
+      console.error('Fetch customer by ID error:', err);
+      return null;
+    }
   }
 }

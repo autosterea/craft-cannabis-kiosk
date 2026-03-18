@@ -20,6 +20,9 @@ export interface KioskCustomer {
   telephone?: string;
   email?: string;
   loyalty_member: boolean;
+  // Extended fields for account linking verification
+  birthday?: string;          // "1990-07-23" format from API
+  drivers_license?: string;
 }
 
 // Queue item type
@@ -99,6 +102,13 @@ export async function lookupCustomerByName(firstName: string, lastName: string):
   }
 
   // Web fallback - not supported, return not found
+  return { found: false };
+}
+
+export async function fetchCustomerById(customerId: number): Promise<{ found: boolean; customer?: KioskCustomer }> {
+  if (isElectron()) {
+    return window.kiosk.fetchCustomerById(customerId);
+  }
   return { found: false };
 }
 

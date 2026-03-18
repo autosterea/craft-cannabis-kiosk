@@ -236,6 +236,16 @@ function setupIpcHandlers() {
     return { found: false };
   });
 
+  // Fetch full customer record from POSaBIT API (for link account verification)
+  ipcMain.handle('fetch-customer-by-id', async (_event, customerId: number) => {
+    if (!posabitService) throw new Error('No venue selected');
+
+    console.log('Fetching full customer record for ID:', customerId);
+    const customer = await posabitService.fetchCustomerById(customerId);
+
+    return customer ? { found: true, customer } : { found: false };
+  });
+
   // Customer lookup by name (local SQLite first, then POSaBIT API fallback) - for ID scan
   ipcMain.handle('lookup-customer-by-name', async (_event, firstName: string, lastName: string) => {
     const venueId = store.get('selectedVenue') as string;
