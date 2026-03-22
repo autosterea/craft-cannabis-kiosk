@@ -364,6 +364,7 @@ export class PosabitService {
     zipCode?: string;
     dateOfBirth?: string;
     gender?: 'M' | 'F' | 'X';
+    driversLicense?: string;
   }): Promise<PosabitCustomer> {
     const customerUpdate: any = {};
 
@@ -407,6 +408,9 @@ export class PosabitService {
     }
     if (data.gender) {
       customerUpdate.gender = data.gender === 'M' ? 'male' : data.gender === 'F' ? 'female' : 'other';
+    }
+    if (data.driversLicense) {
+      customerUpdate.drivers_license = data.driversLicense.trim().toUpperCase();
     }
 
     const body = { customer: customerUpdate };

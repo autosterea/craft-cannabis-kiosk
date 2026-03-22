@@ -645,9 +645,10 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
       age: scannedInfo.age,
     };
 
-    // Update customer with DL demographics
+    // Update customer with DL number + demographics
     try {
       await updateCustomer(foundCustomer.id, {
+        driversLicense: scannedInfo.licenseNumber,
         address1: scannedInfo.address,
         city: scannedInfo.city,
         state: scannedInfo.state,
@@ -655,7 +656,7 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
         dateOfBirth: scannedInfo.dateOfBirth,
         gender: scannedInfo.gender,
       });
-      console.log('Linked account: updated demographics for customer', foundCustomer.id);
+      console.log('Linked account: updated DL + demographics for customer', foundCustomer.id);
     } catch (error) {
       console.error('Failed to update demographics during link:', error);
     }
@@ -684,6 +685,17 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
       dateOfBirth: scannedInfo.dateOfBirth,
       age: scannedInfo.age,
     };
+
+    // Auto-link DL to account if not already on file (fire-and-forget)
+    if (scannedInfo.licenseNumber && !foundCustomer.drivers_license) {
+      updateCustomer(foundCustomer.id, {
+        driversLicense: scannedInfo.licenseNumber,
+      }).then(() => {
+        console.log('Auto-linked DL to customer', foundCustomer.id);
+      }).catch((err) => {
+        console.error('Failed to auto-link DL (non-blocking):', err);
+      });
+    }
 
     // Reset state FIRST to prevent double submissions
     setScannedInfo(null);
