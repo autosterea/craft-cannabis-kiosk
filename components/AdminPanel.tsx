@@ -11,6 +11,7 @@ import {
   getKioskMode,
   getBlockedWords,
   setBlockedWords,
+  getAppVersion,
   Venue,
   KioskCustomer
 } from '../services/kioskApi';
@@ -54,6 +55,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
   // Kiosk mode
   const [kioskModeEnabled, setKioskModeEnabled] = useState(false);
 
+  // App version
+  const [appVersion, setAppVersion] = useState<string>('');
+
   // Blocked words
   const [blockedWords, setBlockedWordsState] = useState<string[]>([]);
   const [newWord, setNewWord] = useState('');
@@ -75,7 +79,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
       setCurrentVenue(venue);
       setSyncStatus(status);
 
-      // Load debug info, kiosk mode, and blocked words if in Electron
+      // Load debug info, kiosk mode, blocked words, and version if in Electron
       if (isElectron()) {
         if (window.kiosk?.debugDbInfo) {
           const info = await window.kiosk.debugDbInfo();
@@ -85,6 +89,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
         setKioskModeEnabled(kioskMode);
         const words = await getBlockedWords();
         setBlockedWordsState(words);
+        const version = await getAppVersion();
+        setAppVersion(version);
       }
     } catch (err) {
       console.error('Failed to load admin data:', err);
@@ -205,9 +211,14 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
       <div className="max-w-4xl mx-auto p-8">
         {/* Header */}
         <div className="flex justify-between items-center mb-8">
-          <h1 className="text-3xl font-craft font-bold text-gold uppercase tracking-wider">
-            Admin Panel
-          </h1>
+          <div>
+            <h1 className="text-3xl font-craft font-bold text-gold uppercase tracking-wider">
+              Admin Panel
+            </h1>
+            {appVersion && (
+              <p className="text-zinc-500 text-sm mt-1">v{appVersion}</p>
+            )}
+          </div>
           <button
             onClick={onClose}
             className="px-6 py-2 bg-zinc-800 text-white rounded-lg hover:bg-zinc-700 transition-colors"

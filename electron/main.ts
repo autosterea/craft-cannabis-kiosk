@@ -94,17 +94,42 @@ autoUpdater.on('download-progress', (progress) => {
   }
 });
 
+let updateDownloaded = false;
+
 autoUpdater.on('update-downloaded', (info) => {
-  console.log('Update downloaded:', info.version, '- will install silently on next quit');
+  console.log('Update downloaded:', info.version, '- will install at 3 AM or on next quit');
+  updateDownloaded = true;
   if (mainWindow) {
     mainWindow.webContents.send('update-downloaded', info);
   }
-  // Silent install on next app quit - no dialog popup
 });
 
 autoUpdater.on('error', (error) => {
   console.error('Auto-updater error:', error);
 });
+
+// Schedule auto-restart at 3 AM if an update is pending
+function scheduleNightlyRestart() {
+  const now = new Date();
+  const next3am = new Date(now);
+  next3am.setHours(3, 0, 0, 0);
+  if (next3am <= now) {
+    next3am.setDate(next3am.getDate() + 1);
+  }
+  const msUntil3am = next3am.getTime() - now.getTime();
+  console.log(`Next update check scheduled at 3:00 AM (in ${Math.round(msUntil3am / 60000)} minutes)`);
+
+  setTimeout(() => {
+    if (updateDownloaded) {
+      console.log('3 AM: installing pending update and restarting...');
+      autoUpdater.quitAndInstall(true, true);
+    } else {
+      console.log('3 AM: no pending update, scheduling next check');
+      scheduleNightlyRestart();
+    }
+  }, msUntil3am);
+}
+scheduleNightlyRestart();
 
 function createWindow() {
   const kioskMode = store.get('kioskMode') as boolean;
