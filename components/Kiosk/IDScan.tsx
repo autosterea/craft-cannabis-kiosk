@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Customer } from '../../types';
-import { lookupCustomerByName, lookupCustomerByLicense, lookupCustomer, fetchCustomerById, updateCustomer, createCustomer, KioskCustomer } from '../../services/kioskApi';
+import { lookupCustomerByName, lookupCustomerByLicense, lookupCustomer, fetchCustomerById, updateCustomer, createCustomer, getQueue, KioskCustomer } from '../../services/kioskApi';
 import TouchKeyboard from './TouchKeyboard';
 
 interface IDScanProps {
@@ -215,10 +215,11 @@ const parseDriversLicense = (scanData: string): ParsedLicense | null => {
 };
 
 const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
-  const [status, setStatus] = useState<'READY' | 'SCANNING' | 'FOUND' | 'LOYALTY_PROMPT' | 'EMAIL_ENTRY' | 'UPDATING_LOYALTY' | 'SUCCESS' | 'UNDERAGE' | 'INVALID_SCAN' | 'NEW_CUSTOMER_LOYALTY_PROMPT' | 'NEW_CUSTOMER_EMAIL' | 'LINK_ACCOUNT_PHONE' | 'LINK_ACCOUNT_SEARCHING' | 'LINK_ACCOUNT_VERIFYING' | 'LINK_ACCOUNT_FOUND' | 'LINK_ACCOUNT_NOT_FOUND' | 'LINK_ACCOUNT_MISMATCH'>('READY');
+  const [status, setStatus] = useState<'READY' | 'SCANNING' | 'FOUND' | 'LOYALTY_PROMPT' | 'EMAIL_ENTRY' | 'UPDATING_LOYALTY' | 'SUCCESS' | 'UNDERAGE' | 'INVALID_SCAN' | 'NEW_CUSTOMER_LOYALTY_PROMPT' | 'NEW_CUSTOMER_EMAIL' | 'LINK_ACCOUNT_PHONE' | 'LINK_ACCOUNT_SEARCHING' | 'LINK_ACCOUNT_VERIFYING' | 'LINK_ACCOUNT_FOUND' | 'LINK_ACCOUNT_NOT_FOUND' | 'LINK_ACCOUNT_MISMATCH' | 'AUTO_CHECKIN' | 'ALREADY_IN_QUEUE'>('READY');
   const [scanBuffer, setScanBuffer] = useState('');
   const [scannedInfo, setScannedInfo] = useState<ParsedLicense | null>(null);
   const [foundCustomer, setFoundCustomer] = useState<KioskCustomer | null>(null);
+  const [foundByDL, setFoundByDL] = useState(false);
   const [email, setEmail] = useState('');
   const [linkPhone, setLinkPhone] = useState('');
   const [managerPin, setManagerPin] = useState('');
@@ -356,13 +357,33 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
         if (dlResult.found && dlResult.customer) {
           console.log('Customer found by DL number:', dlResult.customer.first_name, dlResult.customer.last_name);
           setFoundCustomer(dlResult.customer);
-          setStatus('FOUND');
+          setFoundByDL(true);
+
+          // DL match = high confidence → check queue and auto check-in
+          const alreadyQueued = await isCustomerInQueue(dlResult.customer.id);
+          if (alreadyQueued) {
+            setStatus('ALREADY_IN_QUEUE');
+            setTimeout(() => {
+              setScannedInfo(null);
+              setFoundCustomer(null);
+              setFoundByDL(false);
+              setStatus('READY');
+              resetScan();
+            }, 4000);
+          } else {
+            setStatus('AUTO_CHECKIN');
+            // Auto check-in after brief confirmation display
+            setTimeout(() => {
+              autoCheckIn(dlResult.customer, parsed);
+            }, 2000);
+          }
           return;
         }
       }
 
-      // Strategy 2: Fall back to name search
+      // Strategy 2: Fall back to name search (lower confidence — show buttons)
       console.log('DL lookup miss — trying name search:', firstName, lastName);
+      setFoundByDL(false);
       const result = await lookupCustomerByName(firstName, lastName);
       if (result.found && result.customer) {
         setFoundCustomer(result.customer);
@@ -375,7 +396,45 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
 
     // Customer not found - show loyalty prompt instead of creating empty profile
     setFoundCustomer(null);
+    setFoundByDL(false);
     setStatus('NEW_CUSTOMER_LOYALTY_PROMPT');
+  };
+
+  // Check if customer is already in the queue (by customer_id)
+  const isCustomerInQueue = async (customerId: number): Promise<boolean> => {
+    try {
+      const response = await getQueue();
+      if (!response?.customer_queues) return false;
+      return response.customer_queues.some(
+        q => q.customer_id === customerId && (q.aasm_state === 'open' || q.aasm_state === 'processing')
+      );
+    } catch (error) {
+      console.error('Queue check failed:', error);
+      return false;
+    }
+  };
+
+  // Auto check-in for DL-recognized customers (no buttons)
+  const autoCheckIn = (customer: KioskCustomer, scan: ParsedLicense) => {
+    const customerData = {
+      name: customer.first_name,
+      lastNameInitial: customer.last_name?.[0]?.toUpperCase() || '',
+      method: 'ID_SCAN' as const,
+      loyaltyStatus: customer.loyalty_member ? 'Member' as const : 'Guest' as const,
+      customerId: customer.id,
+      driversLicense: scan.licenseNumber,
+      dateOfBirth: scan.dateOfBirth,
+      age: scan.age,
+    };
+
+    // Reset state
+    setScannedInfo(null);
+    setFoundCustomer(null);
+    setFoundByDL(false);
+    setStatus('READY');
+    resetScan();
+
+    onComplete(customerData);
   };
 
   // New customer declines loyalty — create with DL demographics only
@@ -842,6 +901,60 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
     resetScan();
     onComplete(customerData);
   };
+
+  // AUTO_CHECKIN state - DL recognized, auto checking in (no buttons)
+  if (status === 'AUTO_CHECKIN' && foundCustomer && scannedInfo) {
+    return (
+      <div className="text-center w-full max-w-2xl bg-zinc-900/50 p-12 rounded-3xl border border-zinc-800 shadow-xl">
+        <div className="text-8xl mb-6">✅</div>
+        <h2 className="text-4xl font-craft font-bold mb-4 text-gold uppercase tracking-wider">
+          Welcome Back!
+        </h2>
+        <p className="text-3xl text-white mb-2">
+          {foundCustomer.first_name} {foundCustomer.last_name?.[0] || ''}.
+        </p>
+        {foundCustomer.loyalty_member && (
+          <p className="text-gold text-xl mb-4">Loyalty Member</p>
+        )}
+        <p className="text-zinc-400 text-lg mt-6">Adding you to the queue...</p>
+        <div className="animate-spin w-8 h-8 border-2 border-gold border-t-transparent rounded-full mx-auto mt-4"></div>
+
+        <input
+          ref={inputRef}
+          type="text"
+          className="opacity-0 absolute -left-[9999px]"
+          onChange={handleScanInput}
+          onKeyDown={(e) => { if (e.altKey || (e.ctrlKey && e.key === 'm')) e.preventDefault(); }}
+          autoComplete="off"
+        />
+      </div>
+    );
+  }
+
+  // ALREADY_IN_QUEUE state - Customer scanned but already waiting
+  if (status === 'ALREADY_IN_QUEUE' && foundCustomer) {
+    return (
+      <div className="text-center w-full max-w-2xl bg-zinc-900/50 p-12 rounded-3xl border border-zinc-800 shadow-xl">
+        <div className="text-8xl mb-6">🙋</div>
+        <h2 className="text-4xl font-craft font-bold mb-4 text-gold uppercase tracking-wider">
+          You're Already In Line!
+        </h2>
+        <p className="text-3xl text-white mb-4">
+          {foundCustomer.first_name} {foundCustomer.last_name?.[0] || ''}.
+        </p>
+        <p className="text-zinc-400 text-lg">Please watch the screen in the lounge. We'll be with you shortly.</p>
+
+        <input
+          ref={inputRef}
+          type="text"
+          className="opacity-0 absolute -left-[9999px]"
+          onChange={handleScanInput}
+          onKeyDown={(e) => { if (e.altKey || (e.ctrlKey && e.key === 'm')) e.preventDefault(); }}
+          autoComplete="off"
+        />
+      </div>
+    );
+  }
 
   // FOUND state - Customer is LOYALTY MEMBER, show Welcome Back!
   if (status === 'FOUND' && foundCustomer && scannedInfo && foundCustomer.loyalty_member) {
