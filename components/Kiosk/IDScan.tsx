@@ -395,6 +395,7 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
         lastName: lastName || undefined,
         telephone: '',
         loyaltyOptIn: false,
+        driversLicense: scannedInfo.licenseNumber,
         address1: scannedInfo.address,
         city: scannedInfo.city,
         state: scannedInfo.state,
@@ -448,6 +449,7 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
         telephone: '',
         email,
         loyaltyOptIn: true,
+        driversLicense: scannedInfo.licenseNumber,
         address1: scannedInfo.address,
         city: scannedInfo.city,
         state: scannedInfo.state,
@@ -771,6 +773,7 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
         marketingOptIn: true,
         email: email,
         // Include demographics from DL
+        driversLicense: scannedInfo.licenseNumber,
         address1: scannedInfo.address,
         city: scannedInfo.city,
         state: scannedInfo.state,
@@ -819,6 +822,7 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
     // Update customer with demographics from DL (even without loyalty signup)
     try {
       await updateCustomer(foundCustomer.id, {
+        driversLicense: scannedInfo.licenseNumber,
         address1: scannedInfo.address,
         city: scannedInfo.city,
         state: scannedInfo.state,

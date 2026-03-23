@@ -134,6 +134,7 @@ export async function createCustomer(data: {
   zipCode?: string;
   dateOfBirth?: string;
   gender?: 'M' | 'F' | 'X';
+  driversLicense?: string;
 }): Promise<KioskCustomer> {
   if (isElectron()) {
     return window.kiosk.createCustomer(data);
