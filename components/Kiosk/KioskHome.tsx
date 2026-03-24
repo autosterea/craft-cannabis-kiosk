@@ -14,7 +14,11 @@ interface KioskHomeProps {
 
 const KioskHome: React.FC<KioskHomeProps> = ({ onCheckIn, lastCheckIn }) => {
   const [activeScreen, setActiveScreen] = useState<'HOME' | CheckInMethod>('HOME');
+  const [pendingScanData, setPendingScanData] = useState<string | null>(null);
   const prevLastCheckIn = useRef<Customer | null>(null);
+  const homeScanRef = useRef<HTMLInputElement>(null);
+  const homeScanBuffer = useRef('');
+  const homeScanTimeout = useRef<NodeJS.Timeout | null>(null);
 
   // Auto-return to home screen after check-in confirmation clears
   useEffect(() => {
@@ -23,6 +27,53 @@ const KioskHome: React.FC<KioskHomeProps> = ({ onCheckIn, lastCheckIn }) => {
     }
     prevLastCheckIn.current = lastCheckIn;
   }, [lastCheckIn]);
+
+  // Keep home screen scanner input focused when on HOME screen
+  useEffect(() => {
+    if (activeScreen === 'HOME' && !lastCheckIn) {
+      homeScanRef.current?.focus();
+      const keepFocus = setInterval(() => {
+        if (activeScreen === 'HOME' && document.activeElement !== homeScanRef.current) {
+          homeScanRef.current?.focus();
+        }
+      }, 500);
+      return () => clearInterval(keepFocus);
+    }
+  }, [activeScreen, lastCheckIn]);
+
+  // Handle barcode scan on home screen
+  const handleHomeScan = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (activeScreen !== 'HOME' || lastCheckIn) {
+      e.target.value = '';
+      return;
+    }
+
+    const value = e.target.value;
+    homeScanBuffer.current = value;
+
+    if (homeScanTimeout.current) {
+      clearTimeout(homeScanTimeout.current);
+    }
+
+    // Wait for scanner to finish typing (100ms debounce)
+    homeScanTimeout.current = setTimeout(() => {
+      if (value.length > 100) {
+        // Looks like a DL barcode — switch to ID scan with this data
+        setPendingScanData(value);
+        setActiveScreen('ID_SCAN');
+        // Clear the buffer
+        homeScanBuffer.current = '';
+        if (homeScanRef.current) homeScanRef.current.value = '';
+      } else {
+        // Too short — not a DL barcode, clear it
+        homeScanBuffer.current = '';
+        if (homeScanRef.current) homeScanRef.current.value = '';
+      }
+    }, 100);
+  };
+
+  // Clear pending scan data after IDScan picks it up
+  const clearPendingScan = () => setPendingScanData(null);
 
   const handleBack = () => setActiveScreen('HOME');
 
@@ -111,7 +162,7 @@ const KioskHome: React.FC<KioskHomeProps> = ({ onCheckIn, lastCheckIn }) => {
             </button>
             
             <div className="flex-1 flex items-center justify-center">
-              {activeScreen === 'ID_SCAN' && <IDScan onComplete={onCheckIn} />}
+              {activeScreen === 'ID_SCAN' && <IDScan onComplete={onCheckIn} pendingScanData={pendingScanData} onPendingScanConsumed={clearPendingScan} />}
               {activeScreen === 'PHONE' && <PhoneEntry onComplete={onCheckIn} />}
               {activeScreen === 'GUEST' && <GuestEntry onComplete={onCheckIn} />}
               {activeScreen === 'QR' && <QREntry onComplete={onCheckIn} />}
@@ -119,6 +170,18 @@ const KioskHome: React.FC<KioskHomeProps> = ({ onCheckIn, lastCheckIn }) => {
           </div>
         )}
       </div>
+
+      {/* Hidden scanner input for home screen auto-scan */}
+      {activeScreen === 'HOME' && !lastCheckIn && (
+        <input
+          ref={homeScanRef}
+          type="text"
+          className="opacity-0 absolute -left-[9999px]"
+          onChange={handleHomeScan}
+          onKeyDown={(e) => { if (e.altKey || (e.ctrlKey && e.key === 'm')) e.preventDefault(); }}
+          autoComplete="off"
+        />
+      )}
 
       <footer className="p-6 text-center text-zinc-600 text-xs font-craft tracking-widest bg-black/30">
         &copy; {new Date().getFullYear()} Craft Cannabis • Elevate Your Experience

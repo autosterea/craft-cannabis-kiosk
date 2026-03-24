@@ -6,6 +6,8 @@ import TouchKeyboard from './TouchKeyboard';
 
 interface IDScanProps {
   onComplete: (data: Partial<Customer>) => void;
+  pendingScanData?: string | null;
+  onPendingScanConsumed?: () => void;
 }
 
 interface ParsedLicense {
@@ -214,7 +216,7 @@ const parseDriversLicense = (scanData: string): ParsedLicense | null => {
   }
 };
 
-const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
+const IDScan: React.FC<IDScanProps> = ({ onComplete, pendingScanData, onPendingScanConsumed }) => {
   const [status, setStatus] = useState<'READY' | 'SCANNING' | 'FOUND' | 'LOYALTY_PROMPT' | 'EMAIL_ENTRY' | 'UPDATING_LOYALTY' | 'SUCCESS' | 'UNDERAGE' | 'INVALID_SCAN' | 'NEW_CUSTOMER_LOYALTY_PROMPT' | 'NEW_CUSTOMER_EMAIL' | 'LINK_ACCOUNT_PHONE' | 'LINK_ACCOUNT_SEARCHING' | 'LINK_ACCOUNT_VERIFYING' | 'LINK_ACCOUNT_FOUND' | 'LINK_ACCOUNT_NOT_FOUND' | 'LINK_ACCOUNT_MISMATCH' | 'AUTO_CHECKIN' | 'ALREADY_IN_QUEUE'>('READY');
   const [scanBuffer, setScanBuffer] = useState('');
   const [scannedInfo, setScannedInfo] = useState<ParsedLicense | null>(null);
@@ -239,6 +241,14 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
 
     return () => clearInterval(keepFocus);
   }, []);
+
+  // Process pending scan data from home screen auto-scan
+  useEffect(() => {
+    if (pendingScanData && status === 'READY') {
+      onPendingScanConsumed?.();
+      processScan(pendingScanData);
+    }
+  }, [pendingScanData]);
 
   const handleScanInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     // Only accept input in READY state to prevent duplicate scans
@@ -372,22 +382,40 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
             }, 4000);
           } else {
             setStatus('AUTO_CHECKIN');
-            // Auto check-in after brief confirmation display
+            // Auto check-in after 6 second confirmation display
             setTimeout(() => {
               autoCheckIn(dlResult.customer, parsed);
-            }, 2000);
+            }, 6000);
           }
           return;
         }
       }
 
-      // Strategy 2: Fall back to name search (lower confidence — show buttons)
+      // Strategy 2: Fall back to name search — still auto check-in if found
       console.log('DL lookup miss — trying name search:', firstName, lastName);
       setFoundByDL(false);
       const result = await lookupCustomerByName(firstName, lastName);
       if (result.found && result.customer) {
         setFoundCustomer(result.customer);
-        setStatus('FOUND');
+
+        // Check if already in queue
+        const alreadyQueued = await isCustomerInQueue(result.customer.id);
+        if (alreadyQueued) {
+          setStatus('ALREADY_IN_QUEUE');
+          setTimeout(() => {
+            setScannedInfo(null);
+            setFoundCustomer(null);
+            setFoundByDL(false);
+            setStatus('READY');
+            resetScan();
+          }, 4000);
+        } else {
+          setStatus('AUTO_CHECKIN');
+          // Auto check-in after brief confirmation display (6 seconds)
+          setTimeout(() => {
+            autoCheckIn(result.customer, parsed);
+          }, 6000);
+        }
         return;
       }
     } catch (error) {
@@ -414,7 +442,7 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
     }
   };
 
-  // Auto check-in for DL-recognized customers (no buttons)
+  // Auto check-in for found customers (no buttons)
   const autoCheckIn = (customer: KioskCustomer, scan: ParsedLicense) => {
     const customerData = {
       name: customer.first_name,
@@ -426,6 +454,23 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
       dateOfBirth: scan.dateOfBirth,
       age: scan.age,
     };
+
+    // Auto-link DL to account if not already on file (fire-and-forget)
+    if (scan.licenseNumber && !customer.drivers_license) {
+      updateCustomer(customer.id, {
+        driversLicense: scan.licenseNumber,
+        address1: scan.address,
+        city: scan.city,
+        state: scan.state,
+        zipCode: scan.zipCode,
+        dateOfBirth: scan.dateOfBirth,
+        gender: scan.gender,
+      }).then(() => {
+        console.log('Auto-linked DL + demographics to customer', customer.id);
+      }).catch((err) => {
+        console.error('Failed to auto-link DL (non-blocking):', err);
+      });
+    }
 
     // Reset state
     setScannedInfo(null);
@@ -902,22 +947,46 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete }) => {
     onComplete(customerData);
   };
 
-  // AUTO_CHECKIN state - DL recognized, auto checking in (no buttons)
+  // Handle loyalty signup from auto check-in screen (non-blocking — already checked in)
+  const handleAutoLoyaltySignup = () => {
+    if (!foundCustomer || !scannedInfo) return;
+    // Cancel the auto-clear timer by switching to email entry
+    setEmail('');
+    setStatus('EMAIL_ENTRY');
+  };
+
+  // AUTO_CHECKIN state - Found customer, auto checking in
   if (status === 'AUTO_CHECKIN' && foundCustomer && scannedInfo) {
     return (
       <div className="text-center w-full max-w-2xl bg-zinc-900/50 p-12 rounded-3xl border border-zinc-800 shadow-xl">
         <div className="text-8xl mb-6">✅</div>
         <h2 className="text-4xl font-craft font-bold mb-4 text-gold uppercase tracking-wider">
-          Welcome Back!
+          Welcome Back, {foundCustomer.first_name}!
         </h2>
-        <p className="text-3xl text-white mb-2">
-          {foundCustomer.first_name} {foundCustomer.last_name?.[0] || ''}.
-        </p>
-        {foundCustomer.loyalty_member && (
-          <p className="text-gold text-xl mb-4">Loyalty Member</p>
+        <p className="text-2xl text-white mb-4">You're all checked in!</p>
+
+        {/* Age info */}
+        <div className="mb-6 p-4 rounded-xl bg-green-900/30 border border-green-700">
+          <div className="grid grid-cols-2 gap-2 text-left text-lg">
+            <span className="text-zinc-400">DOB:</span>
+            <span className="text-white">{formatDOB(scannedInfo.dateOfBirth || '')}</span>
+            <span className="text-zinc-400">Age:</span>
+            <span className="text-green-400 font-bold">{scannedInfo.age} years old ✓</span>
+          </div>
+        </div>
+
+        {foundCustomer.loyalty_member ? (
+          <p className="text-gold text-lg">Loyalty Member</p>
+        ) : (
+          <button
+            onClick={handleAutoLoyaltySignup}
+            className="mt-2 px-8 py-4 rounded-xl text-lg font-craft bg-gold/20 text-gold border border-gold/40 hover:bg-gold/30 transition-all"
+          >
+            Interested in joining our Loyalty Program?
+          </button>
         )}
-        <p className="text-zinc-400 text-lg mt-6">Adding you to the queue...</p>
-        <div className="animate-spin w-8 h-8 border-2 border-gold border-t-transparent rounded-full mx-auto mt-4"></div>
+
+        <p className="text-zinc-500 text-sm mt-6">Please watch the screen in the lounge. We'll be with you shortly.</p>
 
         <input
           ref={inputRef}
