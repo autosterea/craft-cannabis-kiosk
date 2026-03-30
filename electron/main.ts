@@ -348,9 +348,15 @@ function setupIpcHandlers() {
   });
 
   ipcMain.handle('add-to-queue', async (_event, data: any) => {
+    const venueId = store.get('selectedVenue') as string;
+
     if (!posabitService) {
       // Store offline if no connection
-      addOfflineQueueEntry(data);
+      try {
+        addOfflineQueueEntry({ ...data, venue_id: venueId });
+      } catch (e) {
+        console.error('Failed to store offline queue entry:', e);
+      }
       return { offline: true };
     }
 
@@ -359,7 +365,11 @@ function setupIpcHandlers() {
       return result;
     } catch (error) {
       // Store offline on failure
-      addOfflineQueueEntry(data);
+      try {
+        addOfflineQueueEntry({ ...data, venue_id: venueId });
+      } catch (e) {
+        console.error('Failed to store offline queue entry:', e);
+      }
       return { offline: true, error: (error as Error).message };
     }
   });

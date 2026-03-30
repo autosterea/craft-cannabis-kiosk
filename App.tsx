@@ -251,7 +251,7 @@ const App: React.FC = () => {
       if (view === 'TV') {
         await fetchQueue();
       }
-      setTimeout(() => setLastCheckIn(null), 3000);
+      setTimeout(() => setLastCheckIn(null), 6000);
     } catch (err) {
       console.error('Failed to check in:', err);
       setError('Check-in failed. Please try again.');

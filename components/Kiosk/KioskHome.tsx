@@ -162,7 +162,7 @@ const KioskHome: React.FC<KioskHomeProps> = ({ onCheckIn, lastCheckIn }) => {
             </button>
             
             <div className="flex-1 flex items-center justify-center">
-              {activeScreen === 'ID_SCAN' && <IDScan onComplete={onCheckIn} pendingScanData={pendingScanData} onPendingScanConsumed={clearPendingScan} />}
+              {activeScreen === 'ID_SCAN' && <IDScan onComplete={onCheckIn} onGoHome={() => setActiveScreen('HOME')} pendingScanData={pendingScanData} onPendingScanConsumed={clearPendingScan} />}
               {activeScreen === 'PHONE' && <PhoneEntry onComplete={onCheckIn} />}
               {activeScreen === 'GUEST' && <GuestEntry onComplete={onCheckIn} />}
               {activeScreen === 'QR' && <QREntry onComplete={onCheckIn} />}

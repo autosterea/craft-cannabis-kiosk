@@ -6,6 +6,7 @@ import TouchKeyboard from './TouchKeyboard';
 
 interface IDScanProps {
   onComplete: (data: Partial<Customer>) => void;
+  onGoHome?: () => void;
   pendingScanData?: string | null;
   onPendingScanConsumed?: () => void;
 }
@@ -89,14 +90,38 @@ const parseDriversLicense = (scanData: string): ParsedLicense | null => {
       'DFN', 'DLN', 'DEN'
     ];
 
-    // Create a regex pattern to find all field codes and their positions
-    const fieldCodeRegex = new RegExp(`(${allFieldCodes.join('|')})`, 'g');
+    // Find field codes by scanning for each code independently to avoid
+    // regex overlap issues (e.g., "BEAMGUARDDAC" → regex sees "DDA" before "DAC")
+    const allMatches: { code: string; index: number }[] = [];
+    for (const code of allFieldCodes) {
+      let pos = 0;
+      while ((pos = scanData.indexOf(code, pos)) !== -1) {
+        allMatches.push({ code, index: pos });
+        pos += 3;
+      }
+    }
 
-    // Find all field code positions
+    // Sort by position, then prefer priority codes when two overlap
+    allMatches.sort((a, b) => a.index - b.index || 0);
+
+    // Deduplicate: when two codes overlap at adjacent positions, keep the priority one
+    const priorityCodes = new Set(['DCS', 'DAC', 'DAD', 'DAQ', 'DBB', 'DAG', 'DAI', 'DAJ', 'DAK', 'DBA', 'DBC', 'DAY', 'DAU', 'DBD', 'DCA', 'DCB', 'DCD', 'DCF', 'DCG']);
     const matches: { code: string; index: number }[] = [];
-    let match;
-    while ((match = fieldCodeRegex.exec(scanData)) !== null) {
-      matches.push({ code: match[1], index: match.index });
+    for (let i = 0; i < allMatches.length; i++) {
+      const curr = allMatches[i];
+      // Skip if this overlaps with the previous accepted match
+      if (matches.length > 0) {
+        const prev = matches[matches.length - 1];
+        if (curr.index < prev.index + 3) {
+          // Overlapping — keep the priority one
+          if (priorityCodes.has(curr.code) && !priorityCodes.has(prev.code)) {
+            matches.pop(); // Replace previous with current
+          } else {
+            continue; // Skip current
+          }
+        }
+      }
+      matches.push(curr);
     }
 
     // Extract value for each field code (from after code to next code)
@@ -216,7 +241,7 @@ const parseDriversLicense = (scanData: string): ParsedLicense | null => {
   }
 };
 
-const IDScan: React.FC<IDScanProps> = ({ onComplete, pendingScanData, onPendingScanConsumed }) => {
+const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, onPendingScanConsumed }) => {
   const [status, setStatus] = useState<'READY' | 'SCANNING' | 'FOUND' | 'LOYALTY_PROMPT' | 'EMAIL_ENTRY' | 'UPDATING_LOYALTY' | 'SUCCESS' | 'UNDERAGE' | 'INVALID_SCAN' | 'NEW_CUSTOMER_LOYALTY_PROMPT' | 'NEW_CUSTOMER_EMAIL' | 'LINK_ACCOUNT_PHONE' | 'LINK_ACCOUNT_SEARCHING' | 'LINK_ACCOUNT_VERIFYING' | 'LINK_ACCOUNT_FOUND' | 'LINK_ACCOUNT_NOT_FOUND' | 'LINK_ACCOUNT_MISMATCH' | 'AUTO_CHECKIN' | 'ALREADY_IN_QUEUE'>('READY');
   const [scanBuffer, setScanBuffer] = useState('');
   const [scannedInfo, setScannedInfo] = useState<ParsedLicense | null>(null);
@@ -377,8 +402,8 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, pendingScanData, onPendingS
               setScannedInfo(null);
               setFoundCustomer(null);
               setFoundByDL(false);
-              setStatus('READY');
               resetScan();
+              onGoHome?.();
             }, 4000);
           } else {
             setStatus('AUTO_CHECKIN');
@@ -443,6 +468,7 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, pendingScanData, onPendingS
   };
 
   // Auto check-in for found customers (no buttons)
+  // Called immediately when AUTO_CHECKIN is set — adds to queue right away
   const autoCheckIn = (customer: KioskCustomer, scan: ParsedLicense) => {
     const customerData = {
       name: customer.first_name,
@@ -472,11 +498,10 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, pendingScanData, onPendingS
       });
     }
 
-    // Reset state
+    // Reset state — don't set READY (KioskHome confirmation takes over)
     setScannedInfo(null);
     setFoundCustomer(null);
     setFoundByDL(false);
-    setStatus('READY');
     resetScan();
 
     onComplete(customerData);
@@ -813,29 +838,13 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, pendingScanData, onPendingS
     onComplete(customerData);
   };
 
-  // Continue as guest (when "Not Me" is clicked)
+  // Continue as guest (when "Not Me" is clicked) — go back to home, don't add to queue
   const continueAsGuest = () => {
-    if (!scannedInfo) return;
-
-    // Prevent double-click
-    const guestData = {
-      name: scannedInfo.firstName,
-      lastNameInitial: scannedInfo.lastName?.[0]?.toUpperCase() || '',
-      method: 'ID_SCAN',
-      loyaltyStatus: 'Guest',
-      driversLicense: scannedInfo.licenseNumber,
-      dateOfBirth: scannedInfo.dateOfBirth,
-      age: scannedInfo.age,
-    };
-
-    // Reset state FIRST to prevent double submissions
     setScannedInfo(null);
     setFoundCustomer(null);
-    setStatus('READY');
+    setFoundByDL(false);
     resetScan();
-
-    // Then call onComplete
-    onComplete(guestData);
+    onGoHome?.();
   };
 
   const resetScan = () => {
