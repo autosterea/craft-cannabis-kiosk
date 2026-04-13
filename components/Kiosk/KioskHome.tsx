@@ -99,11 +99,11 @@ const KioskHome: React.FC<KioskHomeProps> = ({ onCheckIn, lastCheckIn }) => {
       <div className="flex-1 flex flex-col items-center justify-center bg-[#1a1a1a] animate-in fade-in zoom-in duration-500">
         <div className="bg-zinc-800 p-12 rounded-3xl border-2 border-gold text-center max-w-xl shadow-2xl">
           <div className="text-6xl mb-6">✅</div>
-          <h1 className="text-4xl font-craft font-bold text-gold mb-4">Checked In!</h1>
-          <p className="text-2xl text-zinc-300 mb-8">
-            Welcome, <span className="font-bold text-white">{lastCheckIn.name}</span>.
+          <h1 className="text-4xl font-craft font-bold text-gold mb-4">You're All Checked In!</h1>
+          <p className="text-2xl text-zinc-300 mb-4">
+            Thank you, <span className="font-bold text-white">{lastCheckIn.name}</span>!
           </p>
-          <p className="text-lg text-zinc-400">Please watch the screen in the lounge. We'll be with you shortly.</p>
+          <p className="text-lg text-zinc-400">Your name will appear on the screen in a moment.</p>
         </div>
       </div>
     );

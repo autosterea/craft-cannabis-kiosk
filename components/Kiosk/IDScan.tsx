@@ -979,8 +979,8 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
           <div className="grid grid-cols-2 gap-2 text-left text-lg">
             <span className="text-zinc-400">DOB:</span>
             <span className="text-white">{formatDOB(scannedInfo.dateOfBirth || '')}</span>
-            <span className="text-zinc-400">Age:</span>
-            <span className="text-green-400 font-bold">{scannedInfo.age} years old ✓</span>
+            <span className="text-zinc-400">21+:</span>
+            <span className="text-green-400 font-bold">Verified ✓</span>
           </div>
         </div>
 
@@ -995,7 +995,7 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
           </button>
         )}
 
-        <p className="text-zinc-500 text-sm mt-6">Please watch the screen in the lounge. We'll be with you shortly.</p>
+        <p className="text-zinc-500 text-sm mt-6">Your name will appear on the screen in a moment.</p>
 
         <input
           ref={inputRef}
@@ -1020,7 +1020,7 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
         <p className="text-3xl text-white mb-4">
           {foundCustomer.first_name} {foundCustomer.last_name?.[0] || ''}.
         </p>
-        <p className="text-zinc-400 text-lg">Please watch the screen in the lounge. We'll be with you shortly.</p>
+        <p className="text-zinc-400 text-lg">Your name will appear on the screen in a moment.</p>
 
         <input
           ref={inputRef}
@@ -1052,8 +1052,8 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
           <div className="grid grid-cols-2 gap-2 text-left text-lg">
             <span className="text-zinc-400">DOB:</span>
             <span className="text-white">{formatDOB(scannedInfo.dateOfBirth || '')}</span>
-            <span className="text-zinc-400">Age:</span>
-            <span className="text-green-400 font-bold">{scannedInfo.age} years old ✓</span>
+            <span className="text-zinc-400">21+:</span>
+            <span className="text-green-400 font-bold">Verified ✓</span>
             {scannedInfo.licenseNumber && (
               <>
                 <span className="text-zinc-400">DL #:</span>
@@ -1111,8 +1111,8 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
           <div className="grid grid-cols-2 gap-2 text-left text-lg">
             <span className="text-zinc-400">DOB:</span>
             <span className="text-white">{formatDOB(scannedInfo.dateOfBirth || '')}</span>
-            <span className="text-zinc-400">Age:</span>
-            <span className="text-green-400 font-bold">{scannedInfo.age} years old ✓</span>
+            <span className="text-zinc-400">21+:</span>
+            <span className="text-green-400 font-bold">Verified ✓</span>
           </div>
         </div>
 
@@ -1210,8 +1210,8 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
           <div className="grid grid-cols-2 gap-2 text-left text-lg">
             <span className="text-zinc-400">DOB:</span>
             <span className="text-white">{formatDOB(scannedInfo.dateOfBirth || '')}</span>
-            <span className="text-zinc-400">Age:</span>
-            <span className="text-green-400 font-bold">{scannedInfo.age} years old ✓</span>
+            <span className="text-zinc-400">21+:</span>
+            <span className="text-green-400 font-bold">Verified ✓</span>
           </div>
         </div>
 
@@ -1683,9 +1683,9 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
             <span className="text-white font-bold">{scannedInfo.firstName} {scannedInfo.lastName}</span>
             <span className="text-zinc-400">DOB:</span>
             <span className="text-white">{formatDOB(scannedInfo.dateOfBirth || '')}</span>
-            <span className="text-zinc-400">Age:</span>
+            <span className="text-zinc-400">21+:</span>
             <span className={`font-bold ${scannedInfo.isOver21 ? 'text-green-400' : 'text-red-400'}`}>
-              {scannedInfo.age} years old {scannedInfo.isOver21 ? '✓' : '✗'}
+              {scannedInfo.isOver21 ? 'Verified ✓' : 'Under 21 ✗'}
             </span>
             {scannedInfo.licenseNumber && (
               <>

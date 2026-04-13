@@ -19,22 +19,46 @@ const DEFAULT_BLOCKED_WORDS: string[] = [
   'ass', 'asshole', 'bastard', 'bitch', 'bullshit', 'cock', 'cunt',
   'damn', 'dick', 'douche', 'fuck', 'fucker', 'fucked', 'fucking',
   'goddamn', 'motherfucker', 'piss', 'prick', 'pussy', 'shit',
-  'slut', 'twat', 'whore',
+  'slut', 'twat', 'whore', 'wanker', 'tosser', 'bellend', 'knob',
+  'arse', 'arsehole', 'bollocks', 'bugger', 'bloody', 'blowjob',
+  'butthole', 'buttplug', 'circlejerk', 'clit', 'clitoris',
+  'crap', 'dammit', 'dildo', 'dumbass', 'dumbfuck',
+  'ejaculate', 'erection', 'fellatio', 'fingering', 'fisting',
+  'gangbang', 'handjob', 'jackass', 'jackoff', 'jerkoff',
+  'masturbate', 'orgasm', 'rimjob', 'scrotum', 'semen',
+  'shithead', 'shitface', 'skank', 'smegma', 'spunk',
+  'testicle', 'turd', 'vibrator',
   // F-word variations
-  'fboy', 'fboi', 'fuk', 'fck', 'stfu', 'wtf', 'af',
+  'fboy', 'fboi', 'fuk', 'fck', 'stfu', 'wtf', 'af', 'phuck',
+  'phuk', 'fuq', 'effing', 'fking', 'fcking', 'fudge',
+  // N-word and variations (comprehensive)
+  'nigga', 'nigger', 'nigg', 'niga', 'nigah', 'niggah', 'niggas',
+  'niggers', 'niggaz', 'n1gga', 'n1gger', 'niqqa', 'niqqer',
+  // Other slurs
+  'faggot', 'fag', 'fagot', 'fagg', 'retard', 'retarded',
+  'dyke', 'tranny', 'shemale', 'chink', 'gook', 'spic',
+  'wetback', 'beaner', 'kike', 'towelhead', 'raghead',
+  'cracker', 'redneck', 'hillbilly', 'coon', 'darkie',
+  'negro', 'chinaman', 'jap', 'paki',
   // Violence
   'shoot', 'shooter', 'shot', 'kill', 'bomb', 'isis',
-  // Hate speech / slurs
-  'nigga', 'nigger', 'faggot', 'fag', 'retard', 'retarded',
-  'gay', 'lesbian', 'dyke', 'tranny',
-  // Political trolling
+  'murder', 'terrorist', 'jihad', 'cartel',
+  // Political trolling (Sarah's additions)
   'maga', 'magatt', 'magatard', 'snowflake', 'libtard', 'ice',
+  'trump', 'donaldtrump', 'biden', 'joebiden', 'scamala',
+  'brandon', 'letsgobrandon',
   // Sexual / inappropriate
   'daddy', 'sugarbaby', 'milf', 'dilf', 'boobs', 'tits', 'penis',
-  'vagina', 'sexy', 'horny', 'hoe', 'thot',
+  'vagina', 'sexy', 'horny', 'hoe', 'thot', 'hooker', 'stripper',
+  'pornstar', 'onlyfans', 'simp', 'incel',
+  // Sarah's specific additions
+  'mami', 'papi', 'mommy', 'mom', 'dumb', 'stupid', 'fool',
+  'cum', 'cumgoblin',
   // Meme / troll names
   'deez', 'ligma', 'sugma', 'bofa', 'problem', 'police',
-  'yourmom', 'urmom',
+  'yourmom', 'urmom', 'yomama', 'seymour', 'heywood',
+  'imafraud', 'fakename', 'guest', 'test', 'admin',
+  'null', 'undefined', 'anonymous',
 ];
 
 // Store schema type
