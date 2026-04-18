@@ -372,7 +372,35 @@ const App: React.FC = () => {
 
       {/* PIN Entry Overlay */}
       {showPinEntry && (
-        <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center">
+        <div
+          className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center"
+          tabIndex={0}
+          autoFocus
+          onKeyDown={(e) => {
+            if (e.key >= '0' && e.key <= '9') {
+              const newPin = pin + e.key;
+              if (newPin.length <= 3) {
+                setPin(newPin);
+                setPinError(false);
+                if (newPin.length === 3) {
+                  if (newPin === '420') {
+                    setShowPinEntry(false);
+                    setShowAdminPanel(true);
+                    setPin('');
+                  } else {
+                    setPinError(true);
+                    setTimeout(() => setPin(''), 500);
+                  }
+                }
+              }
+            } else if (e.key === 'Backspace') {
+              setPin(prev => prev.slice(0, -1));
+              setPinError(false);
+            } else if (e.key === 'Escape') {
+              setShowPinEntry(false); setPin(''); setPinError(false);
+            }
+          }}
+        >
           <div className="bg-zinc-900 p-10 rounded-3xl border border-zinc-700 shadow-2xl text-center w-full max-w-sm">
             <h2 className="text-2xl font-craft font-bold text-gold mb-2 uppercase tracking-wider">Admin Access</h2>
             <p className="text-zinc-400 text-sm mb-6">Enter PIN to continue</p>

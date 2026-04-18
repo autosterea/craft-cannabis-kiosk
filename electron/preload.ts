@@ -105,6 +105,11 @@ declare global {
       forceSync: () => Promise<{ success: boolean }>;
       setKioskMode: (enabled: boolean) => Promise<boolean>;
       getKioskMode: () => Promise<boolean>;
+      getShowHomeInfoPanel: () => Promise<boolean>;
+      setShowHomeInfoPanel: (enabled: boolean) => Promise<boolean>;
+      onShowHomeInfoPanelChanged: (callback: (enabled: boolean) => void) => () => void;
+      toggleFullscreen: () => Promise<boolean>;
+      getFullscreen: () => Promise<boolean>;
       getBlockedWords: () => Promise<string[]>;
       setBlockedWords: (words: string[]) => Promise<string[]>;
       onSyncProgress: (callback: (progress: { current: number; total: number }) => void) => () => void;
@@ -115,6 +120,7 @@ declare global {
       // Auto-update
       lookupCustomerByName: (firstName: string, lastName: string) => Promise<{ found: boolean; customer?: KioskCustomer }>;
       lookupCustomerByLicense: (licenseNumber: string) => Promise<{ found: boolean; customer?: KioskCustomer }>;
+      lookupCustomerByDobLastname: (birthday: string, lastName: string) => Promise<{ found: boolean; customer?: KioskCustomer }>;
       fetchCustomerById: (customerId: number) => Promise<{ found: boolean; customer?: KioskCustomer }>;
       updateCustomer: (customerId: number, data: any) => Promise<KioskCustomer>;
       checkForUpdates: () => Promise<any>;

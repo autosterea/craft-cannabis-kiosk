@@ -210,10 +210,10 @@ export class PosabitService {
     if (data.state) customerData.state = data.state;
     if (data.zipCode) customerData.zip_code = data.zipCode;
     if (data.dateOfBirth) {
-      // Convert MMDDYYYY to YYYY-MM-DD for API
+      // Convert MMDDYYYY to YYYY-MM-DD for API (POSaBIT field is "birthday", not "date_of_birth")
       const dob = data.dateOfBirth;
       if (dob.length === 8) {
-        customerData.date_of_birth = `${dob.substring(4, 8)}-${dob.substring(0, 2)}-${dob.substring(2, 4)}`;
+        customerData.birthday = `${dob.substring(4, 8)}-${dob.substring(0, 2)}-${dob.substring(2, 4)}`;
       }
     }
     if (data.gender) {
@@ -237,6 +237,24 @@ export class PosabitService {
 
     if (!response.ok) {
       const errorText = await response.text();
+
+      // Duplicate DL — POSaBIT rejects because this license already belongs to an existing record
+      // (e.g., budtender created the customer at the till before the kiosk POST landed).
+      // Recover by linking to the existing customer instead of erroring out at the kiosk.
+      const lower = errorText.toLowerCase();
+      const looksDuplicate =
+        response.status === 422 &&
+        (lower.includes('already') || lower.includes('taken') || lower.includes('drivers_license') || lower.includes('duplicate'));
+
+      if (looksDuplicate && data.driversLicense) {
+        console.log('createCustomer got duplicate DL — looking up existing record:', data.driversLicense);
+        const existing = await this.searchCustomerByLicense(data.driversLicense);
+        if (existing) {
+          console.log('Linked to existing customer:', existing.id);
+          return existing;
+        }
+      }
+
       throw new Error(`Failed to create customer: ${response.status} - ${errorText}`);
     }
 
@@ -349,6 +367,51 @@ export class PosabitService {
       return null;
     } catch (err) {
       console.error('API name search error:', err);
+      return null;
+    }
+  }
+
+  // Search by birthday + last name (catches renewed DLs, nickname mismatches)
+  async searchCustomerByDobAndLastName(birthday: string, lastName: string): Promise<PosabitCustomer | null> {
+    try {
+      const params = new URLSearchParams({
+        per_page: '10',
+        'q[birthday_eq]': birthday,
+        'q[last_name_cont]': lastName,
+      });
+
+      const url = `${BASE_URL}/venue/customers?${params.toString()}`;
+      console.log('API DOB+lastname search:', birthday, lastName);
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': this.authHeader,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) return null;
+
+      const data = await response.json() as CustomerResponse;
+      if (!data.customers || data.customers.length === 0) return null;
+
+      const unwrapped = data.customers.map((item: any) =>
+        item.customer ? item.customer : item
+      );
+
+      // Return first match that has a phone (prefer established accounts over other kiosk records)
+      const withPhone = unwrapped.find((c: PosabitCustomer) => c.telephone);
+      if (withPhone) {
+        console.log('DOB+lastname match (with phone):', withPhone.first_name, withPhone.last_name, 'ID:', withPhone.id);
+        return withPhone;
+      }
+
+      // If no phone match, return first result
+      console.log('DOB+lastname match:', unwrapped[0].first_name, unwrapped[0].last_name, 'ID:', unwrapped[0].id);
+      return unwrapped[0];
+    } catch (err) {
+      console.error('DOB+lastname search error:', err);
       return null;
     }
   }

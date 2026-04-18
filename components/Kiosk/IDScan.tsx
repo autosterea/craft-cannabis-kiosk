@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Customer } from '../../types';
-import { lookupCustomerByName, lookupCustomerByLicense, lookupCustomer, fetchCustomerById, updateCustomer, createCustomer, getQueue, KioskCustomer } from '../../services/kioskApi';
+import { lookupCustomerByName, lookupCustomerByLicense, lookupCustomerByDobLastname, lookupCustomer, fetchCustomerById, updateCustomer, createCustomer, getQueue, KioskCustomer } from '../../services/kioskApi';
 import TouchKeyboard from './TouchKeyboard';
 
 interface IDScanProps {
@@ -416,8 +416,41 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
         }
       }
 
-      // Strategy 2: Fall back to name search — still auto check-in if found
-      console.log('DL lookup miss — trying name search:', firstName, lastName);
+      // Strategy 2: DOB + last name (catches renewed DLs, nickname vs legal name)
+      if (parsed.dateOfBirth && lastName) {
+        const dob = parsed.dateOfBirth;
+        if (dob.length === 8) {
+          const birthday = `${dob.substring(4, 8)}-${dob.substring(0, 2)}-${dob.substring(2, 4)}`;
+          console.log('DL lookup miss — trying DOB+lastname:', birthday, lastName);
+          const dobResult = await lookupCustomerByDobLastname(birthday, lastName);
+          if (dobResult.found && dobResult.customer) {
+            console.log('Customer found by DOB+lastname:', dobResult.customer.first_name, dobResult.customer.last_name);
+            setFoundCustomer(dobResult.customer);
+            setFoundByDL(false);
+
+            const alreadyQueued = await isCustomerInQueue(dobResult.customer.id);
+            if (alreadyQueued) {
+              setStatus('ALREADY_IN_QUEUE');
+              setTimeout(() => {
+                setScannedInfo(null);
+                setFoundCustomer(null);
+                setFoundByDL(false);
+                resetScan();
+                onGoHome?.();
+              }, 4000);
+            } else {
+              setStatus('AUTO_CHECKIN');
+              setTimeout(() => {
+                autoCheckIn(dobResult.customer, parsed);
+              }, 6000);
+            }
+            return;
+          }
+        }
+      }
+
+      // Strategy 3: Fall back to name search — still auto check-in if found
+      console.log('DL+DOB lookup miss — trying name search:', firstName, lastName);
       setFoundByDL(false);
       const result = await lookupCustomerByName(firstName, lastName);
       if (result.found && result.customer) {
@@ -956,14 +989,6 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
     onComplete(customerData);
   };
 
-  // Handle loyalty signup from auto check-in screen (non-blocking — already checked in)
-  const handleAutoLoyaltySignup = () => {
-    if (!foundCustomer || !scannedInfo) return;
-    // Cancel the auto-clear timer by switching to email entry
-    setEmail('');
-    setStatus('EMAIL_ENTRY');
-  };
-
   // AUTO_CHECKIN state - Found customer, auto checking in
   if (status === 'AUTO_CHECKIN' && foundCustomer && scannedInfo) {
     return (
@@ -984,15 +1009,8 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
           </div>
         </div>
 
-        {foundCustomer.loyalty_member ? (
+        {foundCustomer.loyalty_member && (
           <p className="text-gold text-lg">Loyalty Member</p>
-        ) : (
-          <button
-            onClick={handleAutoLoyaltySignup}
-            className="mt-2 px-8 py-4 rounded-xl text-lg font-craft bg-gold/20 text-gold border border-gold/40 hover:bg-gold/30 transition-all"
-          >
-            Interested in joining our Loyalty Program?
-          </button>
         )}
 
         <p className="text-zinc-500 text-sm mt-6">Your name will appear on the screen in a moment.</p>
@@ -1638,30 +1656,25 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
 
   return (
     <div className="text-center w-full max-w-2xl bg-zinc-900/50 p-12 rounded-3xl border border-zinc-800 shadow-xl">
-      <div className="mb-12 relative inline-block">
-        <div className={`w-64 h-80 border-4 border-dashed rounded-2xl flex flex-col items-center justify-center transition-all duration-300 ${
-          status === 'SCANNING' ? 'border-gold bg-gold/20' :
-          status === 'SUCCESS' || status === 'FOUND' ? 'border-green-500 bg-green-500/20' :
-          status === 'UNDERAGE' || status === 'INVALID_SCAN' ? 'border-red-500 bg-red-500/20' :
-          'border-gold/40 bg-zinc-800 animate-pulse'
-        }`}>
-          {status === 'SUCCESS' ? (
-            <svg className="w-24 h-24 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+      <div className="mb-10 flex flex-col items-center justify-center min-h-[14rem]">
+        {status === 'SUCCESS' ? (
+          <svg className="w-32 h-32 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+          </svg>
+        ) : status === 'UNDERAGE' || status === 'INVALID_SCAN' ? (
+          <svg className="w-32 h-32 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+        ) : status === 'SCANNING' ? (
+          <div className="w-20 h-20 border-4 border-gold border-t-transparent rounded-full animate-spin"></div>
+        ) : (
+          <>
+            {/* Animated downward arrow directing to physical scanner */}
+            <svg className="w-28 h-28 text-gold animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
             </svg>
-          ) : status === 'UNDERAGE' ? (
-            <svg className="w-24 h-24 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-          ) : (
-            <>
-              <svg className="w-24 h-24 text-gold mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
-              </svg>
-              <div className="h-1 bg-gold absolute w-48 top-1/2 left-1/2 -translate-x-1/2 animate-bounce opacity-80"></div>
-            </>
-          )}
-        </div>
+          </>
+        )}
       </div>
 
       <h2 className={`text-4xl font-craft font-bold mb-6 uppercase tracking-tighter ${
@@ -1698,7 +1711,7 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
       )}
 
       <p className={`text-xl mb-12 ${status === 'UNDERAGE' ? 'text-red-400' : 'text-zinc-400'}`}>
-        {status === 'READY' && 'Place the barcode on the back of your ID under the scanner.'}
+        {status === 'READY' && 'Hold the barcode on the back of your ID under the scanner below.'}
         {status === 'SCANNING' && 'Please wait while we verify your information...'}
         {status === 'SUCCESS' && 'Welcome! Adding you to the queue...'}
         {status === 'UNDERAGE' && 'Sorry, you must be 21 or older to enter. Please see a staff member.'}

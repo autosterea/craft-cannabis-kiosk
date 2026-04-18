@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('kiosk', {
   lookupCustomer: (phone) => ipcRenderer.invoke('lookup-customer', phone),
   lookupCustomerByName: (firstName, lastName) => ipcRenderer.invoke('lookup-customer-by-name', firstName, lastName),
   lookupCustomerByLicense: (licenseNumber) => ipcRenderer.invoke('lookup-customer-by-license', licenseNumber),
+  lookupCustomerByDobLastname: (birthday, lastName) => ipcRenderer.invoke('lookup-customer-by-dob-lastname', birthday, lastName),
   fetchCustomerById: (customerId) => ipcRenderer.invoke('fetch-customer-by-id', customerId),
   createCustomer: (data) => ipcRenderer.invoke('create-customer', data),
   updateCustomer: (customerId, data) => ipcRenderer.invoke('update-customer', customerId, data),
@@ -27,6 +28,13 @@ contextBridge.exposeInMainWorld('kiosk', {
   // Settings
   setKioskMode: (enabled) => ipcRenderer.invoke('set-kiosk-mode', enabled),
   getKioskMode: () => ipcRenderer.invoke('get-kiosk-mode'),
+  getShowHomeInfoPanel: () => ipcRenderer.invoke('get-show-home-info-panel'),
+  setShowHomeInfoPanel: (enabled) => ipcRenderer.invoke('set-show-home-info-panel', enabled),
+  onShowHomeInfoPanelChanged: (callback) => {
+    const handler = (_event, enabled) => callback(enabled);
+    ipcRenderer.on('show-home-info-panel-changed', handler);
+    return () => ipcRenderer.removeListener('show-home-info-panel-changed', handler);
+  },
 
   // Blocked words
   getBlockedWords: () => ipcRenderer.invoke('get-blocked-words'),
@@ -53,6 +61,8 @@ contextBridge.exposeInMainWorld('kiosk', {
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   installUpdate: () => ipcRenderer.invoke('install-update'),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  toggleFullscreen: () => ipcRenderer.invoke('toggle-fullscreen'),
+  getFullscreen: () => ipcRenderer.invoke('get-fullscreen'),
 
   // Update event listeners
   onUpdateAvailable: (callback) => {

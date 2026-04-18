@@ -1,7 +1,7 @@
 {
   "name": "craft-cannabis-kiosk",
   "private": true,
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Craft Cannabis Kiosk - Customer Check-in Application",
   "main": "dist-electron/main.js",
   "type": "module",
@@ -14,6 +14,8 @@
     "electron:build": "npm run build && tsc -p tsconfig.electron.json && cp electron/preload.cjs dist-electron/preload.cjs && electron-builder",
     "electron:publish": "npm run build && tsc -p tsconfig.electron.json && cp electron/preload.cjs dist-electron/preload.cjs && electron-builder --publish always",
     "electron:rebuild": "electron-rebuild -f -w better-sqlite3",
+    "release": "node scripts/release.cjs",
+    "verify-release": "node scripts/verify-release.cjs",
     "postinstall": "electron-rebuild -f -w better-sqlite3"
   },
   "dependencies": {

@@ -66,6 +66,7 @@ interface StoreSchema {
   selectedVenue: string | null;
   lastSyncTime: string | null;
   kioskMode: boolean;
+  showHomeInfoPanel: boolean;
   blockedWords: string[];
 }
 
@@ -75,6 +76,7 @@ const store = new Store<StoreSchema>({
     selectedVenue: null,
     lastSyncTime: null,
     kioskMode: false,
+    showHomeInfoPanel: true,
     blockedWords: DEFAULT_BLOCKED_WORDS,
   }
 });
@@ -159,9 +161,10 @@ function createWindow() {
   const kioskMode = store.get('kioskMode') as boolean;
 
   mainWindow = new BrowserWindow({
+    title: `Craft Kiosk v${app.getVersion()}`,
     width: 1920,
     height: 1080,
-    fullscreen: kioskMode,
+    fullscreen: !isDev,
     frame: !kioskMode,
     kiosk: kioskMode,
     autoHideMenuBar: true,
@@ -332,6 +335,24 @@ function setupIpcHandlers() {
     return { found: false };
   });
 
+  // Customer lookup by DOB + last name (POSaBIT API only — catches renewed DLs, nickname mismatches)
+  ipcMain.handle('lookup-customer-by-dob-lastname', async (_event, birthday: string, lastName: string) => {
+    console.log('Looking up customer by DOB+lastname:', birthday, lastName);
+    if (!posabitService || !birthday || !lastName) return { found: false };
+
+    try {
+      const customer = await posabitService.searchCustomerByDobAndLastName(birthday, lastName);
+      if (customer) {
+        const venueId = store.get('selectedVenue') as string;
+        if (venueId) upsertCustomers([customer], venueId);
+        return { found: true, customer };
+      }
+    } catch (err) {
+      console.error('DOB+lastname lookup failed:', err);
+    }
+    return { found: false };
+  });
+
   // Create customer in POSaBIT
   ipcMain.handle('create-customer', async (_event, data: any) => {
     if (!posabitService) throw new Error('No venue selected');
@@ -426,6 +447,15 @@ function setupIpcHandlers() {
 
   ipcMain.handle('get-kiosk-mode', () => store.get('kioskMode'));
 
+  ipcMain.handle('get-show-home-info-panel', () => store.get('showHomeInfoPanel'));
+  ipcMain.handle('set-show-home-info-panel', (_event, enabled: boolean) => {
+    store.set('showHomeInfoPanel', enabled);
+    if (mainWindow) {
+      mainWindow.webContents.send('show-home-info-panel-changed', enabled);
+    }
+    return enabled;
+  });
+
   // Blocked words
   ipcMain.handle('get-blocked-words', () => store.get('blockedWords'));
 
@@ -454,6 +484,19 @@ function setupIpcHandlers() {
   });
 
   ipcMain.handle('get-app-version', () => app.getVersion());
+
+  ipcMain.handle('toggle-fullscreen', () => {
+    if (mainWindow) {
+      const isFullScreen = mainWindow.isFullScreen();
+      mainWindow.setFullScreen(!isFullScreen);
+      return !isFullScreen;
+    }
+    return false;
+  });
+
+  ipcMain.handle('get-fullscreen', () => {
+    return mainWindow?.isFullScreen() ?? false;
+  });
 
   // Debug/Admin handlers
   ipcMain.handle('debug-search-global', async (_event, phone: string) => {

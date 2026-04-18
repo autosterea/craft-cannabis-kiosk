@@ -121,6 +121,13 @@ export async function lookupCustomerByLicense(licenseNumber: string): Promise<{ 
   return { found: false };
 }
 
+export async function lookupCustomerByDobLastname(birthday: string, lastName: string): Promise<{ found: boolean; customer?: KioskCustomer }> {
+  if (isElectron()) {
+    return window.kiosk.lookupCustomerByDobLastname(birthday, lastName);
+  }
+  return { found: false };
+}
+
 export async function createCustomer(data: {
   firstName: string;
   lastName?: string;
@@ -303,6 +310,21 @@ export async function getKioskMode(): Promise<boolean> {
   }
   // Web fallback
   return false;
+}
+
+export async function getShowHomeInfoPanel(): Promise<boolean> {
+  if (isElectron()) {
+    return window.kiosk.getShowHomeInfoPanel();
+  }
+  // Web fallback — show by default
+  return true;
+}
+
+export async function setShowHomeInfoPanel(enabled: boolean): Promise<boolean> {
+  if (isElectron()) {
+    return window.kiosk.setShowHomeInfoPanel(enabled);
+  }
+  return enabled;
 }
 
 // Auto-update functions

@@ -9,12 +9,25 @@ import {
   lookupCustomer,
   setKioskMode,
   getKioskMode,
+  getShowHomeInfoPanel,
+  setShowHomeInfoPanel,
   getBlockedWords,
   setBlockedWords,
   getAppVersion,
+  checkForUpdates,
+  installUpdate,
   Venue,
   KioskCustomer
 } from '../services/kioskApi';
+
+type UpdateState =
+  | { kind: 'idle' }
+  | { kind: 'checking' }
+  | { kind: 'up-to-date'; checkedAt: Date }
+  | { kind: 'available'; version: string }
+  | { kind: 'downloading'; version: string; percent: number }
+  | { kind: 'ready'; version: string }
+  | { kind: 'error'; message: string };
 
 interface AdminPanelProps {
   onClose: () => void;
@@ -55,8 +68,17 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
   // Kiosk mode
   const [kioskModeEnabled, setKioskModeEnabled] = useState(false);
 
+  // Show Home Info Panel (portrait-only scanner/group cards)
+  const [showHomeInfoPanel, setShowHomeInfoPanelState] = useState(true);
+
   // App version
   const [appVersion, setAppVersion] = useState<string>('');
+
+  // Fullscreen state
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Update state
+  const [updateState, setUpdateState] = useState<UpdateState>({ kind: 'idle' });
 
   // Blocked words
   const [blockedWords, setBlockedWordsState] = useState<string[]>([]);
@@ -66,6 +88,58 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
   useEffect(() => {
     loadData();
   }, []);
+
+  // Subscribe to auto-updater background events (reflects silent updates in UI)
+  useEffect(() => {
+    if (!isElectron() || !window.kiosk) return;
+    const offAvail = window.kiosk.onUpdateAvailable?.((info: { version: string }) => {
+      setUpdateState({ kind: 'downloading', version: info.version, percent: 0 });
+    });
+    const offProg = window.kiosk.onUpdateProgress?.((p: { percent: number }) => {
+      setUpdateState((s) =>
+        s.kind === 'downloading' || s.kind === 'available'
+          ? { kind: 'downloading', version: (s as any).version ?? '', percent: Math.round(p.percent) }
+          : s
+      );
+    });
+    const offDone = window.kiosk.onUpdateDownloaded?.((info: { version: string }) => {
+      setUpdateState({ kind: 'ready', version: info.version });
+    });
+    return () => {
+      offAvail?.();
+      offProg?.();
+      offDone?.();
+    };
+  }, []);
+
+  const handleCheckForUpdates = async () => {
+    if (!isElectron()) return;
+    setUpdateState({ kind: 'checking' });
+    try {
+      const result = await checkForUpdates();
+      if (result.error) {
+        setUpdateState({ kind: 'error', message: result.error });
+        return;
+      }
+      if (result.updateAvailable && result.info?.version && result.info.version !== appVersion) {
+        // Background handlers will flip to 'downloading' → 'ready' as autoUpdater progresses
+        setUpdateState({ kind: 'available', version: result.info.version });
+      } else {
+        setUpdateState({ kind: 'up-to-date', checkedAt: new Date() });
+      }
+    } catch (err) {
+      setUpdateState({ kind: 'error', message: (err as Error).message });
+    }
+  };
+
+  const handleInstallUpdate = async () => {
+    if (!isElectron()) return;
+    try {
+      await installUpdate();
+    } catch (err) {
+      setUpdateState({ kind: 'error', message: (err as Error).message });
+    }
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -87,10 +161,16 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
         }
         const kioskMode = await getKioskMode();
         setKioskModeEnabled(kioskMode);
+        const infoPanel = await getShowHomeInfoPanel();
+        setShowHomeInfoPanelState(infoPanel);
         const words = await getBlockedWords();
         setBlockedWordsState(words);
         const version = await getAppVersion();
         setAppVersion(version);
+        if (window.kiosk?.getFullscreen) {
+          const fs = await window.kiosk.getFullscreen();
+          setIsFullscreen(fs);
+        }
       }
     } catch (err) {
       console.error('Failed to load admin data:', err);
@@ -129,6 +209,13 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
     const newValue = !kioskModeEnabled;
     await setKioskMode(newValue);
     setKioskModeEnabled(newValue);
+  };
+
+  const handleShowHomeInfoPanelToggle = async () => {
+    if (!isElectron()) return;
+    const newValue = !showHomeInfoPanel;
+    await setShowHomeInfoPanel(newValue);
+    setShowHomeInfoPanelState(newValue);
   };
 
   const handleAddBlockedWord = async () => {
@@ -315,6 +402,45 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
                 Press F11 or Alt+F4 to exit kiosk mode if needed
               </p>
             )}
+
+            <div className="flex items-center justify-between mt-6 pt-6 border-t border-zinc-800">
+              <div>
+                <p className="text-white font-bold">Full Screen</p>
+                <p className="text-zinc-400 text-sm">Toggle window full screen mode</p>
+              </div>
+              <button
+                onClick={async () => {
+                  if (window.kiosk?.toggleFullscreen) {
+                    const fs = await window.kiosk.toggleFullscreen();
+                    setIsFullscreen(fs);
+                  }
+                }}
+                className={`px-6 py-3 rounded-lg font-craft font-bold transition-all ${
+                  isFullscreen
+                    ? 'bg-green-600 text-white hover:bg-green-700'
+                    : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
+                }`}
+              >
+                {isFullscreen ? 'ON' : 'OFF'}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between mt-6 pt-6 border-t border-zinc-800">
+              <div>
+                <p className="text-white font-bold">Home Screen Info Panel</p>
+                <p className="text-zinc-400 text-sm">Shows "In a Group?" + "Barcode Scanner Below" cards (portrait screens only)</p>
+              </div>
+              <button
+                onClick={handleShowHomeInfoPanelToggle}
+                className={`px-6 py-3 rounded-lg font-craft font-bold transition-all ${
+                  showHomeInfoPanel
+                    ? 'bg-green-600 text-white hover:bg-green-700'
+                    : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
+                }`}
+              >
+                {showHomeInfoPanel ? 'ON' : 'OFF'}
+              </button>
+            </div>
           </div>
         )}
 
@@ -446,6 +572,81 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
             </div>
           )}
         </div>
+
+        {/* App Updates (Electron only) */}
+        {isElectron() && (
+          <div className="bg-zinc-900/50 p-6 rounded-2xl border border-zinc-800 mb-6">
+            <h2 className="text-xl font-craft text-gold mb-4">App Updates</h2>
+            <p className="text-zinc-400 text-sm mb-4">
+              Current version: <span className="text-white font-mono">v{appVersion}</span>.
+              Kiosk checks for updates automatically on startup and every 24 hours, and installs at 3 AM.
+              Use this button to check immediately.
+            </p>
+
+            <div className="flex items-center gap-4 flex-wrap">
+              <button
+                onClick={handleCheckForUpdates}
+                disabled={updateState.kind === 'checking' || updateState.kind === 'downloading'}
+                className={`px-6 py-3 rounded-lg font-craft font-bold transition-all ${
+                  updateState.kind === 'checking' || updateState.kind === 'downloading'
+                    ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+                    : 'bg-gold text-black hover:bg-[#d8c19d]'
+                }`}
+              >
+                {updateState.kind === 'checking' ? 'Checking...' : 'Check for Updates'}
+              </button>
+
+              {updateState.kind === 'ready' && (
+                <button
+                  onClick={handleInstallUpdate}
+                  className="px-6 py-3 rounded-lg font-craft font-bold bg-green-600 text-white hover:bg-green-700 transition-all"
+                >
+                  Install v{updateState.version} &amp; Restart
+                </button>
+              )}
+            </div>
+
+            <div className="mt-4">
+              {updateState.kind === 'up-to-date' && (
+                <p className="text-green-400 text-sm">
+                  ✓ Up to date (v{appVersion}) — checked {updateState.checkedAt.toLocaleTimeString()}
+                </p>
+              )}
+              {updateState.kind === 'available' && (
+                <p className="text-gold text-sm animate-pulse">
+                  Update found: v{updateState.version} — preparing download...
+                </p>
+              )}
+              {updateState.kind === 'downloading' && (
+                <div>
+                  <p className="text-gold text-sm mb-2">
+                    Downloading v{updateState.version} — {updateState.percent}%
+                  </p>
+                  <div className="w-full bg-zinc-800 rounded-full h-2">
+                    <div
+                      className="bg-gold h-2 rounded-full transition-all"
+                      style={{ width: `${updateState.percent}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+              {updateState.kind === 'ready' && (
+                <p className="text-green-400 text-sm">
+                  v{updateState.version} downloaded. Click "Install &amp; Restart" to apply now, or the app will install it automatically at 3 AM.
+                </p>
+              )}
+              {updateState.kind === 'error' && (
+                <div className="bg-red-900/30 border border-red-700 rounded-lg p-3">
+                  <p className="text-red-400 text-sm font-bold">Update check failed</p>
+                  <p className="text-zinc-400 text-xs mt-1 font-mono break-all">{updateState.message}</p>
+                  <p className="text-zinc-500 text-xs mt-2">
+                    Check internet connection. If this persists, contact support.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Debug Info */}
         <div className="bg-zinc-900/50 p-6 rounded-2xl border border-zinc-800">

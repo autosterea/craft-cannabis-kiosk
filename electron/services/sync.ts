@@ -10,6 +10,7 @@ interface StoreSchema {
   selectedVenue: string | null;
   lastSyncTime: string | null;
   kioskMode: boolean;
+  showHomeInfoPanel: boolean;
   blockedWords: string[];
 }
 
