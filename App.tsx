@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { AppView, Customer } from './types';
 import KioskHome from './components/Kiosk/KioskHome';
 import QueueDisplay from './components/TV/QueueDisplay';
@@ -54,6 +54,12 @@ const App: React.FC = () => {
   const [showPinEntry, setShowPinEntry] = useState(false);
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState(false);
+  const pinOverlayRef = useRef<HTMLDivElement>(null);
+
+  // Focus PIN overlay so keyboard input fires onKeyDown (autoFocus is unreliable on non-form elements)
+  useEffect(() => {
+    if (showPinEntry) pinOverlayRef.current?.focus();
+  }, [showPinEntry]);
 
   // Sync status
   const [syncStatus, setSyncStatus] = useState<{
@@ -373,9 +379,10 @@ const App: React.FC = () => {
       {/* PIN Entry Overlay */}
       {showPinEntry && (
         <div
-          className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center"
-          tabIndex={0}
-          autoFocus
+          ref={pinOverlayRef}
+          data-pin-overlay="true"
+          className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center outline-none"
+          tabIndex={-1}
           onKeyDown={(e) => {
             if (e.key >= '0' && e.key <= '9') {
               const newPin = pin + e.key;

@@ -47,6 +47,8 @@ const KioskHome: React.FC<KioskHomeProps> = ({ onCheckIn, lastCheckIn }) => {
           // Don't steal focus from form elements (admin panel dropdowns, inputs, etc.)
           const tag = document.activeElement?.tagName;
           if (tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA') return;
+          // Don't steal focus when PIN overlay is open — it needs keyboard input
+          if (document.querySelector('[data-pin-overlay]')) return;
           homeScanRef.current?.focus();
         }
       }, 500);

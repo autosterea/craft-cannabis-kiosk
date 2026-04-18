@@ -1,7 +1,7 @@
 {
   "name": "craft-cannabis-kiosk",
   "private": true,
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "Craft Cannabis Kiosk - Customer Check-in Application",
   "main": "dist-electron/main.js",
   "type": "module",
