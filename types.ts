@@ -16,6 +16,8 @@ export interface Customer {
   dateOfBirth?: string;      // MMDDYYYY format from ID scan
   age?: number;              // Calculated age from DOB
   isOnlineOrder?: boolean;   // True if customer has pending online order
+  incognito?: boolean;       // Incogweedo mode — show display number instead of name on queue TV
+  displayNumber?: string;    // 3-digit number assigned for this check-in when incognito is on
 }
 
 export interface LoyaltyProfile {

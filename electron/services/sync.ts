@@ -11,6 +11,7 @@ interface StoreSchema {
   lastSyncTime: string | null;
   kioskMode: boolean;
   showHomeInfoPanel: boolean;
+  incogweedoEnabled: boolean;
   blockedWords: string[];
 }
 

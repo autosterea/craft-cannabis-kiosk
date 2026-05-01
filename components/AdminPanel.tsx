@@ -11,6 +11,8 @@ import {
   getKioskMode,
   getShowHomeInfoPanel,
   setShowHomeInfoPanel,
+  getIncogweedoEnabled,
+  setIncogweedoEnabled,
   getBlockedWords,
   setBlockedWords,
   getAppVersion,
@@ -70,6 +72,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
 
   // Show Home Info Panel (portrait-only scanner/group cards)
   const [showHomeInfoPanel, setShowHomeInfoPanelState] = useState(true);
+
+  // Incogweedo Mode (off by default; per-store opt in)
+  const [incogweedoEnabled, setIncogweedoEnabledState] = useState(false);
 
   // App version
   const [appVersion, setAppVersion] = useState<string>('');
@@ -163,6 +168,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
         setKioskModeEnabled(kioskMode);
         const infoPanel = await getShowHomeInfoPanel();
         setShowHomeInfoPanelState(infoPanel);
+        const incogweedo = await getIncogweedoEnabled();
+        setIncogweedoEnabledState(incogweedo);
         const words = await getBlockedWords();
         setBlockedWordsState(words);
         const version = await getAppVersion();
@@ -216,6 +223,13 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
     const newValue = !showHomeInfoPanel;
     await setShowHomeInfoPanel(newValue);
     setShowHomeInfoPanelState(newValue);
+  };
+
+  const handleIncogweedoToggle = async () => {
+    if (!isElectron()) return;
+    const newValue = !incogweedoEnabled;
+    await setIncogweedoEnabled(newValue);
+    setIncogweedoEnabledState(newValue);
   };
 
   const handleAddBlockedWord = async () => {
@@ -439,6 +453,23 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
                 }`}
               >
                 {showHomeInfoPanel ? 'ON' : 'OFF'}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between mt-6 pt-6 border-t border-zinc-800">
+              <div>
+                <p className="text-white font-bold">Incogweedo Mode</p>
+                <p className="text-zinc-400 text-sm">Lets customers check in with a 3-digit number on the queue TV instead of their name. Off by default — turn on per store.</p>
+              </div>
+              <button
+                onClick={handleIncogweedoToggle}
+                className={`px-6 py-3 rounded-lg font-craft font-bold transition-all ${
+                  incogweedoEnabled
+                    ? 'bg-green-600 text-white hover:bg-green-700'
+                    : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
+                }`}
+              >
+                {incogweedoEnabled ? 'ON' : 'OFF'}
               </button>
             </div>
           </div>

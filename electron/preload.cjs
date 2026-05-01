@@ -35,6 +35,13 @@ contextBridge.exposeInMainWorld('kiosk', {
     ipcRenderer.on('show-home-info-panel-changed', handler);
     return () => ipcRenderer.removeListener('show-home-info-panel-changed', handler);
   },
+  getIncogweedoEnabled: () => ipcRenderer.invoke('get-incogweedo-enabled'),
+  setIncogweedoEnabled: (enabled) => ipcRenderer.invoke('set-incogweedo-enabled', enabled),
+  onIncogweedoEnabledChanged: (callback) => {
+    const handler = (_event, enabled) => callback(enabled);
+    ipcRenderer.on('incogweedo-enabled-changed', handler);
+    return () => ipcRenderer.removeListener('incogweedo-enabled-changed', handler);
+  },
 
   // Blocked words
   getBlockedWords: () => ipcRenderer.invoke('get-blocked-words'),

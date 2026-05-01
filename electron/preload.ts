@@ -108,6 +108,9 @@ declare global {
       getShowHomeInfoPanel: () => Promise<boolean>;
       setShowHomeInfoPanel: (enabled: boolean) => Promise<boolean>;
       onShowHomeInfoPanelChanged: (callback: (enabled: boolean) => void) => () => void;
+      getIncogweedoEnabled: () => Promise<boolean>;
+      setIncogweedoEnabled: (enabled: boolean) => Promise<boolean>;
+      onIncogweedoEnabledChanged: (callback: (enabled: boolean) => void) => () => void;
       toggleFullscreen: () => Promise<boolean>;
       getFullscreen: () => Promise<boolean>;
       getBlockedWords: () => Promise<string[]>;

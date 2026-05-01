@@ -242,13 +242,14 @@ const parseDriversLicense = (scanData: string): ParsedLicense | null => {
 };
 
 const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, onPendingScanConsumed }) => {
-  const [status, setStatus] = useState<'READY' | 'SCANNING' | 'FOUND' | 'LOYALTY_PROMPT' | 'EMAIL_ENTRY' | 'UPDATING_LOYALTY' | 'SUCCESS' | 'UNDERAGE' | 'INVALID_SCAN' | 'NEW_CUSTOMER_LOYALTY_PROMPT' | 'NEW_CUSTOMER_EMAIL' | 'LINK_ACCOUNT_PHONE' | 'LINK_ACCOUNT_SEARCHING' | 'LINK_ACCOUNT_VERIFYING' | 'LINK_ACCOUNT_FOUND' | 'LINK_ACCOUNT_NOT_FOUND' | 'LINK_ACCOUNT_MISMATCH' | 'AUTO_CHECKIN' | 'ALREADY_IN_QUEUE'>('READY');
+  const [status, setStatus] = useState<'READY' | 'SCANNING' | 'FOUND' | 'LOYALTY_PROMPT' | 'EMAIL_ENTRY' | 'UPDATING_LOYALTY' | 'SUCCESS' | 'UNDERAGE' | 'INVALID_SCAN' | 'NEW_CUSTOMER_PHONE' | 'NEW_CUSTOMER_LOYALTY_PROMPT' | 'NEW_CUSTOMER_EMAIL' | 'LINK_ACCOUNT_PHONE' | 'LINK_ACCOUNT_SEARCHING' | 'LINK_ACCOUNT_VERIFYING' | 'LINK_ACCOUNT_FOUND' | 'LINK_ACCOUNT_NOT_FOUND' | 'LINK_ACCOUNT_MISMATCH' | 'AUTO_CHECKIN' | 'ALREADY_IN_QUEUE'>('READY');
   const [scanBuffer, setScanBuffer] = useState('');
   const [scannedInfo, setScannedInfo] = useState<ParsedLicense | null>(null);
   const [foundCustomer, setFoundCustomer] = useState<KioskCustomer | null>(null);
   const [foundByDL, setFoundByDL] = useState(false);
   const [email, setEmail] = useState('');
   const [linkPhone, setLinkPhone] = useState('');
+  const [newCustomerPhone, setNewCustomerPhone] = useState('');
   const [managerPin, setManagerPin] = useState('');
   const [pinError, setPinError] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -480,10 +481,11 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
       console.error('Customer lookup failed:', error);
     }
 
-    // Customer not found - show loyalty prompt instead of creating empty profile
+    // Customer not found - capture phone first (preserves the data for createCustomer + lets us short-circuit if the phone matches an existing account)
     setFoundCustomer(null);
     setFoundByDL(false);
-    setStatus('NEW_CUSTOMER_LOYALTY_PROMPT');
+    setNewCustomerPhone('');
+    setStatus('NEW_CUSTOMER_PHONE');
   };
 
   // Check if customer is already in the queue (by customer_id)
@@ -555,7 +557,7 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
       const newCustomer = await createCustomer({
         firstName,
         lastName: lastName || undefined,
-        telephone: '',
+        telephone: newCustomerPhone,
         loyaltyOptIn: false,
         driversLicense: scannedInfo.licenseNumber,
         address1: scannedInfo.address,
@@ -583,6 +585,7 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
       });
       setScannedInfo(null);
       setFoundCustomer(null);
+      setNewCustomerPhone('');
       setStatus('READY');
     }, 1500);
   };
@@ -608,7 +611,7 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
       const newCustomer = await createCustomer({
         firstName,
         lastName: lastName || undefined,
-        telephone: '',
+        telephone: newCustomerPhone,
         email,
         loyaltyOptIn: true,
         driversLicense: scannedInfo.licenseNumber,
@@ -623,6 +626,7 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
       setScannedInfo(null);
       setFoundCustomer(null);
       setEmail('');
+      setNewCustomerPhone('');
       setStatus('READY');
       resetScan();
 
@@ -726,6 +730,65 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
       'Account:', customer.first_name, customer.last_name,
       'DOB match:', scanDobIso === customer.birthday);
     return false;
+  };
+
+  // New Customer phone helpers (mirrors linkPhone helpers but for the create-account flow)
+  const newCustomerPhoneAppend = (digit: string) => {
+    if (newCustomerPhone.length < 10) setNewCustomerPhone(prev => prev + digit);
+  };
+  const newCustomerPhoneClear = () => setNewCustomerPhone('');
+  const newCustomerPhoneBackspace = () => setNewCustomerPhone(prev => prev.slice(0, -1));
+
+  // Submit phone for a new-customer flow:
+  //   - If phone matches an existing customer, hand off to the existing link-account flow
+  //     (auto-link if shouldAutoLink, else manager-PIN). Prevents duplicate accounts.
+  //   - If no match, advance to the loyalty prompt with the captured phone in state.
+  const submitNewCustomerPhone = async () => {
+    if (newCustomerPhone.length < 10) return;
+
+    setStatus('LINK_ACCOUNT_SEARCHING');
+
+    try {
+      const result = await lookupCustomer(newCustomerPhone);
+
+      if (result.found && result.customer) {
+        setLinkPhone(newCustomerPhone); // mirror so existing link-account UI has the phone
+        setFoundCustomer(result.customer);
+        setStatus('LINK_ACCOUNT_VERIFYING');
+
+        let fullCustomer = result.customer;
+        try {
+          const fullResult = await fetchCustomerById(result.customer.id);
+          if (fullResult.found && fullResult.customer) {
+            fullCustomer = fullResult.customer;
+            setFoundCustomer(fullCustomer);
+          }
+        } catch (err) {
+          console.error('Failed to fetch full customer record:', err);
+        }
+
+        if (scannedInfo && shouldAutoLink(scannedInfo, fullCustomer)) {
+          setStatus('LINK_ACCOUNT_FOUND');
+        } else {
+          setManagerPin('');
+          setPinError(false);
+          setStatus('LINK_ACCOUNT_MISMATCH');
+        }
+      } else {
+        // No existing customer with this phone — proceed to loyalty prompt with phone preserved
+        setStatus('NEW_CUSTOMER_LOYALTY_PROMPT');
+      }
+    } catch (error) {
+      console.error('Phone lookup for new customer failed:', error);
+      // Fail-open: don't block check-in if lookup errors
+      setStatus('NEW_CUSTOMER_LOYALTY_PROMPT');
+    }
+  };
+
+  // Skip phone capture — proceed to loyalty prompt without a phone number
+  const skipNewCustomerPhone = () => {
+    setNewCustomerPhone('');
+    setStatus('NEW_CUSTOMER_LOYALTY_PROMPT');
   };
 
   // Link Account - submit phone and search
@@ -1266,6 +1329,71 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
           onKeyDown={(e) => { if (e.altKey || (e.ctrlKey && e.key === 'm')) e.preventDefault(); }}
           autoComplete="off"
         />
+      </div>
+    );
+  }
+
+  // NEW_CUSTOMER_PHONE state - Capture phone before creating new account (also prevents duplicates)
+  if (status === 'NEW_CUSTOMER_PHONE' && scannedInfo) {
+    return (
+      <div className="text-center w-full max-w-xl bg-zinc-900/50 p-10 rounded-3xl border border-zinc-800 shadow-xl">
+        <h2 className="text-3xl font-craft font-bold mb-2 text-gold uppercase tracking-wider">
+          Welcome, {scannedInfo.firstName}!
+        </h2>
+        <p className="text-zinc-400 mb-6">
+          What's the best phone number for your account?
+        </p>
+
+        <div className="text-4xl font-mono text-gold mb-6 tracking-wider">
+          {formatPhone(newCustomerPhone)}
+        </div>
+
+        {/* Numpad */}
+        <div className="grid grid-cols-3 gap-3 max-w-xs mx-auto mb-6">
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9, null, 0, '←'].map((key, i) => (
+            key === null ? <div key={i} /> : (
+              <button
+                key={i}
+                onClick={() => {
+                  if (key === '←') newCustomerPhoneBackspace();
+                  else newCustomerPhoneAppend(key.toString());
+                }}
+                className={`h-16 text-2xl font-craft flex items-center justify-center rounded-xl transition-all active:scale-95 ${
+                  key === '←' ? 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600' : 'bg-zinc-800 text-white hover:bg-zinc-700'
+                }`}
+              >
+                {key}
+              </button>
+            )
+          ))}
+        </div>
+
+        <div className="flex gap-3">
+          <button
+            onClick={newCustomerPhoneClear}
+            className="flex-1 p-4 rounded-xl text-lg font-craft bg-zinc-800 text-zinc-400 hover:bg-zinc-700 transition-all"
+          >
+            Clear
+          </button>
+          <button
+            onClick={submitNewCustomerPhone}
+            disabled={newCustomerPhone.length < 10}
+            className={`flex-1 p-4 rounded-xl text-lg font-craft font-bold transition-all ${
+              newCustomerPhone.length >= 10
+                ? 'bg-gold text-black hover:bg-[#d8c19d]'
+                : 'bg-zinc-800 text-zinc-600 cursor-not-allowed'
+            }`}
+          >
+            Continue
+          </button>
+        </div>
+
+        <button
+          onClick={skipNewCustomerPhone}
+          className="mt-6 text-zinc-500 text-sm hover:text-zinc-300 transition-colors"
+        >
+          Skip — continue without a phone number
+        </button>
       </div>
     );
   }

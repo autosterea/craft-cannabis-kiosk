@@ -67,6 +67,7 @@ interface StoreSchema {
   lastSyncTime: string | null;
   kioskMode: boolean;
   showHomeInfoPanel: boolean;
+  incogweedoEnabled: boolean;
   blockedWords: string[];
 }
 
@@ -77,6 +78,7 @@ const store = new Store<StoreSchema>({
     lastSyncTime: null,
     kioskMode: false,
     showHomeInfoPanel: true,
+    incogweedoEnabled: false,
     blockedWords: DEFAULT_BLOCKED_WORDS,
   }
 });
@@ -394,9 +396,18 @@ function setupIpcHandlers() {
 
   ipcMain.handle('add-to-queue', async (_event, data: any) => {
     const venueId = store.get('selectedVenue') as string;
+    console.log('[add-to-queue] incoming data:', JSON.stringify(data));
+
+    // Strip kiosk-only fields before they reach POSaBIT (POSaBIT only reads name/telephone/customerId/source)
+    const posabitPayload = {
+      name: data.name,
+      telephone: data.phone || data.telephone,
+      customerId: data.customerId,
+      source: (data.source || 'walk_in') as 'walk_in' | 'order_ahead',
+    };
 
     if (!posabitService) {
-      // Store offline if no connection
+      console.warn('[add-to-queue] no posabit service — storing offline');
       try {
         addOfflineQueueEntry({ ...data, venue_id: venueId });
       } catch (e) {
@@ -406,10 +417,11 @@ function setupIpcHandlers() {
     }
 
     try {
-      const result = await posabitService.addToQueue(data);
+      const result = await posabitService.addToQueue(posabitPayload);
+      console.log('[add-to-queue] POSaBIT success — customer_queue_id:', result.customer_queue_id);
       return result;
     } catch (error) {
-      // Store offline on failure
+      console.error('[add-to-queue] POSaBIT failed:', (error as Error).message);
       try {
         addOfflineQueueEntry({ ...data, venue_id: venueId });
       } catch (e) {
@@ -452,6 +464,15 @@ function setupIpcHandlers() {
     store.set('showHomeInfoPanel', enabled);
     if (mainWindow) {
       mainWindow.webContents.send('show-home-info-panel-changed', enabled);
+    }
+    return enabled;
+  });
+
+  ipcMain.handle('get-incogweedo-enabled', () => store.get('incogweedoEnabled'));
+  ipcMain.handle('set-incogweedo-enabled', (_event, enabled: boolean) => {
+    store.set('incogweedoEnabled', enabled);
+    if (mainWindow) {
+      mainWindow.webContents.send('incogweedo-enabled-changed', enabled);
     }
     return enabled;
   });

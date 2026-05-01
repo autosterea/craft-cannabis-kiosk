@@ -229,12 +229,14 @@ const App: React.FC = () => {
         return;
       }
 
-      // Normal walk-in flow — add to queue
+      // Normal walk-in flow — add to queue (POSaBIT always gets the real name; incognito only affects the queue TV display)
       const result = await addToQueue({
         name: fullName,
         phone: customerData.phone,
         method: customerData.method || 'WALK_IN',
         customerId: customerData.customerId,
+        incognito: customerData.incognito,
+        displayNumber: customerData.displayNumber,
       });
 
       // Handle offline mode
@@ -250,6 +252,8 @@ const App: React.FC = () => {
         method: customerData.method || 'WALK_IN',
         loyaltyStatus: customerData.loyaltyStatus || 'Guest',
         status: 'Waiting',
+        incognito: customerData.incognito,
+        displayNumber: customerData.displayNumber,
       };
 
       setLastCheckIn(newCustomer);

@@ -2,11 +2,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Logo, GoldButton } from '../Branding';
 import { Customer, CheckInMethod } from '../../types';
-import { getShowHomeInfoPanel, isElectron } from '../../services/kioskApi';
+import { getShowHomeInfoPanel, getIncogweedoEnabled, generateDisplayNumber, isElectron } from '../../services/kioskApi';
 import IDScan from './IDScan';
 import PhoneEntry from './PhoneEntry';
 import GuestEntry from './GuestEntry';
 import QREntry from './QREntry';
+import IncogweedoToggle from './IncogweedoToggle';
 
 interface KioskHomeProps {
   onCheckIn: (data: Partial<Customer>) => void;
@@ -17,6 +18,9 @@ const KioskHome: React.FC<KioskHomeProps> = ({ onCheckIn, lastCheckIn }) => {
   const [activeScreen, setActiveScreen] = useState<'HOME' | CheckInMethod>('HOME');
   const [pendingScanData, setPendingScanData] = useState<string | null>(null);
   const [showInfoPanel, setShowInfoPanel] = useState(true);
+  const [incogweedoEnabled, setIncogweedoEnabled] = useState(false);
+  const [incognitoOn, setIncognitoOn] = useState(false);
+  const [displayNumber, setDisplayNumber] = useState('');
   const prevLastCheckIn = useRef<Customer | null>(null);
   const homeScanRef = useRef<HTMLInputElement>(null);
   const homeScanBuffer = useRef('');
@@ -29,6 +33,41 @@ const KioskHome: React.FC<KioskHomeProps> = ({ onCheckIn, lastCheckIn }) => {
     const off = window.kiosk.onShowHomeInfoPanelChanged?.(setShowInfoPanel);
     return off;
   }, []);
+
+  // Load Incogweedo Mode admin setting + live-update on toggle
+  useEffect(() => {
+    if (!isElectron()) return;
+    getIncogweedoEnabled().then(setIncogweedoEnabled);
+    const off = window.kiosk.onIncogweedoEnabledChanged?.(setIncogweedoEnabled);
+    return off;
+  }, []);
+
+  // Reset Incogweedo per-checkin state whenever we land back on HOME (fresh customer)
+  useEffect(() => {
+    if (activeScreen === 'HOME' && !lastCheckIn) {
+      setIncognitoOn(false);
+      setDisplayNumber('');
+    }
+  }, [activeScreen, lastCheckIn]);
+
+  const handleIncogweedoToggle = () => {
+    setIncognitoOn(prev => {
+      const next = !prev;
+      // Generate a new number on each turn-on so toggling off + on assigns a fresh one
+      if (next) setDisplayNumber(generateDisplayNumber());
+      else setDisplayNumber('');
+      return next;
+    });
+  };
+
+  // Wrap the parent onCheckIn so every entry-screen submission carries the incognito flag + number
+  const handleCheckIn = (data: Partial<Customer>) => {
+    if (incognitoOn && displayNumber) {
+      onCheckIn({ ...data, incognito: true, displayNumber });
+    } else {
+      onCheckIn(data);
+    }
+  };
 
   // Auto-return to home screen after check-in confirmation clears
   useEffect(() => {
@@ -115,10 +154,21 @@ const KioskHome: React.FC<KioskHomeProps> = ({ onCheckIn, lastCheckIn }) => {
         <div className="bg-zinc-800 p-12 rounded-3xl border-2 border-gold text-center max-w-xl shadow-2xl">
           <div className="text-6xl mb-6">✅</div>
           <h1 className="text-4xl font-craft font-bold text-gold mb-4">You're All Checked In!</h1>
-          <p className="text-2xl text-zinc-300 mb-4">
-            Thank you, <span className="font-bold text-white">{lastCheckIn.name}</span>!
-          </p>
-          <p className="text-lg text-zinc-400">Your name will appear on the screen in a moment.</p>
+          {lastCheckIn.incognito && lastCheckIn.displayNumber ? (
+            <>
+              <p className="text-2xl text-zinc-300 mb-2">
+                You're <span className="font-bold text-gold text-3xl">#{lastCheckIn.displayNumber}</span>
+              </p>
+              <p className="text-lg text-zinc-400">Look for that on the screen — it'll come up in a moment.</p>
+            </>
+          ) : (
+            <>
+              <p className="text-2xl text-zinc-300 mb-4">
+                Thank you, <span className="font-bold text-white">{lastCheckIn.name}</span>!
+              </p>
+              <p className="text-lg text-zinc-400">Your name will appear on the screen in a moment.</p>
+            </>
+          )}
         </div>
       </div>
     );
@@ -206,19 +256,29 @@ const KioskHome: React.FC<KioskHomeProps> = ({ onCheckIn, lastCheckIn }) => {
           </>
         ) : (
           <div className="flex-1 flex flex-col p-10 animate-in slide-in-from-right-10 duration-300">
-            <button 
+            <button
               onClick={handleBack}
               className="mb-8 flex items-center gap-2 text-gold font-craft text-xl hover:text-white transition-colors"
             >
               <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 19l-7-7 7-7" /></svg>
               Go Back
             </button>
-            
+
+            {incogweedoEnabled && (
+              <div className="mb-6 max-w-2xl mx-auto w-full">
+                <IncogweedoToggle
+                  active={incognitoOn}
+                  onToggle={handleIncogweedoToggle}
+                  displayNumber={displayNumber}
+                />
+              </div>
+            )}
+
             <div className="flex-1 flex items-center justify-center">
-              {activeScreen === 'ID_SCAN' && <IDScan onComplete={onCheckIn} onGoHome={() => setActiveScreen('HOME')} pendingScanData={pendingScanData} onPendingScanConsumed={clearPendingScan} />}
-              {activeScreen === 'PHONE' && <PhoneEntry onComplete={onCheckIn} />}
-              {activeScreen === 'GUEST' && <GuestEntry onComplete={onCheckIn} />}
-              {activeScreen === 'QR' && <QREntry onComplete={onCheckIn} />}
+              {activeScreen === 'ID_SCAN' && <IDScan onComplete={handleCheckIn} onGoHome={() => setActiveScreen('HOME')} pendingScanData={pendingScanData} onPendingScanConsumed={clearPendingScan} />}
+              {activeScreen === 'PHONE' && <PhoneEntry onComplete={handleCheckIn} />}
+              {activeScreen === 'GUEST' && <GuestEntry onComplete={handleCheckIn} />}
+              {activeScreen === 'QR' && <QREntry onComplete={handleCheckIn} />}
             </div>
           </div>
         )}

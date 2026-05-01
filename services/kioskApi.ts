@@ -188,6 +188,8 @@ export async function addToQueue(data: {
   phone?: string;
   method: string;
   customerId?: number;
+  incognito?: boolean;
+  displayNumber?: string;
 }): Promise<any> {
   if (isElectron()) {
     return window.kiosk.addToQueue(data);
@@ -325,6 +327,25 @@ export async function setShowHomeInfoPanel(enabled: boolean): Promise<boolean> {
     return window.kiosk.setShowHomeInfoPanel(enabled);
   }
   return enabled;
+}
+
+export async function getIncogweedoEnabled(): Promise<boolean> {
+  if (isElectron()) {
+    return window.kiosk.getIncogweedoEnabled();
+  }
+  return false;
+}
+
+export async function setIncogweedoEnabled(enabled: boolean): Promise<boolean> {
+  if (isElectron()) {
+    return window.kiosk.setIncogweedoEnabled(enabled);
+  }
+  return enabled;
+}
+
+// Random 3-digit display number for Incogweedo mode (per check-in)
+export function generateDisplayNumber(): string {
+  return String(Math.floor(Math.random() * 900) + 100);
 }
 
 // Auto-update functions
