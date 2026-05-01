@@ -13,6 +13,8 @@ import {
   setShowHomeInfoPanel,
   getIncogweedoEnabled,
   setIncogweedoEnabled,
+  getFailedScans,
+  FailedScan,
   getBlockedWords,
   setBlockedWords,
   getAppVersion,
@@ -75,6 +77,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
 
   // Incogweedo Mode (off by default; per-store opt in)
   const [incogweedoEnabled, setIncogweedoEnabledState] = useState(false);
+
+  // Failed-scan capture (v2.1.4+)
+  const [failedScans, setFailedScans] = useState<FailedScan[]>([]);
+  const [loadingFailedScans, setLoadingFailedScans] = useState(false);
 
   // App version
   const [appVersion, setAppVersion] = useState<string>('');
@@ -170,6 +176,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
         setShowHomeInfoPanelState(infoPanel);
         const incogweedo = await getIncogweedoEnabled();
         setIncogweedoEnabledState(incogweedo);
+        const fs = await getFailedScans(50);
+        setFailedScans(fs);
         const words = await getBlockedWords();
         setBlockedWordsState(words);
         const version = await getAppVersion();
@@ -230,6 +238,36 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
     const newValue = !incogweedoEnabled;
     await setIncogweedoEnabled(newValue);
     setIncogweedoEnabledState(newValue);
+  };
+
+  const loadFailedScans = async () => {
+    if (!isElectron()) return;
+    setLoadingFailedScans(true);
+    try {
+      const rows = await getFailedScans(50);
+      setFailedScans(rows);
+    } catch (err) {
+      console.error('Failed to load failed scans:', err);
+    } finally {
+      setLoadingFailedScans(false);
+    }
+  };
+
+  const exportFailedScansCsv = () => {
+    if (failedScans.length === 0) return;
+    const escape = (s: string) => `"${(s || '').replace(/"/g, '""')}"`;
+    const header = 'id,created_at,venue_id,parser_error,raw_barcode';
+    const rows = failedScans.map(s =>
+      [s.id, escape(s.created_at), escape(s.venue_id), escape(s.parser_error), escape(s.raw_barcode)].join(',')
+    );
+    const csv = [header, ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `failed-scans-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const handleAddBlockedWord = async () => {
@@ -472,6 +510,71 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
                 {incogweedoEnabled ? 'ON' : 'OFF'}
               </button>
             </div>
+          </div>
+        )}
+
+        {/* Failed Scans (v2.1.4+) — captures raw AAMVA barcode bytes when ID parsing fails */}
+        {isElectron() && (
+          <div className="bg-zinc-900/50 p-6 rounded-2xl border border-zinc-800 mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-craft text-gold">
+                Failed Scans
+                <span className="text-zinc-500 text-sm font-normal ml-2">
+                  ({failedScans.length} recent {failedScans.length === 1 ? 'entry' : 'entries'})
+                </span>
+              </h2>
+              <div className="flex gap-2">
+                <button
+                  onClick={loadFailedScans}
+                  disabled={loadingFailedScans}
+                  className="px-4 py-2 rounded-lg bg-zinc-700 text-zinc-200 hover:bg-zinc-600 text-sm font-craft disabled:opacity-50"
+                >
+                  {loadingFailedScans ? 'Loading...' : 'Refresh'}
+                </button>
+                <button
+                  onClick={exportFailedScansCsv}
+                  disabled={failedScans.length === 0}
+                  className="px-4 py-2 rounded-lg bg-gold text-black hover:bg-[#d8c19d] text-sm font-craft font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Export CSV
+                </button>
+              </div>
+            </div>
+            <p className="text-zinc-400 text-sm mb-4">
+              Raw barcode capture for IDs that fail to parse (Iowa, out-of-state, partial WA, etc.). Last 50 entries shown — older than 30 days are auto-deleted.
+            </p>
+
+            {failedScans.length === 0 ? (
+              <p className="text-zinc-500 text-sm italic">No failed scans recorded yet.</p>
+            ) : (
+              <div className="max-h-96 overflow-y-auto rounded-lg border border-zinc-800">
+                <table className="w-full text-sm">
+                  <thead className="bg-zinc-900/80 sticky top-0">
+                    <tr className="text-left text-zinc-400 text-xs uppercase tracking-wider">
+                      <th className="p-3">When</th>
+                      <th className="p-3">Venue</th>
+                      <th className="p-3">Reason</th>
+                      <th className="p-3">Raw (truncated)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {failedScans.map(scan => (
+                      <tr key={scan.id} className="border-t border-zinc-800 hover:bg-zinc-800/40">
+                        <td className="p-3 text-zinc-300 whitespace-nowrap">
+                          {new Date(scan.created_at).toLocaleString()}
+                        </td>
+                        <td className="p-3 text-zinc-400">{scan.venue_id}</td>
+                        <td className="p-3 text-yellow-400 font-mono text-xs">{scan.parser_error}</td>
+                        <td className="p-3 text-zinc-500 font-mono text-xs break-all">
+                          {scan.raw_barcode.slice(0, 120)}
+                          {scan.raw_barcode.length > 120 ? '…' : ''}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
 

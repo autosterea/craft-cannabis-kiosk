@@ -348,6 +348,28 @@ export function generateDisplayNumber(): string {
   return String(Math.floor(Math.random() * 900) + 100);
 }
 
+// Failed-scan capture (v2.1.4+)
+export interface FailedScan {
+  id: number;
+  raw_barcode: string;
+  parser_error: string;
+  venue_id: string;
+  created_at: string;
+}
+
+export async function logFailedScan(rawBarcode: string, parserError: string): Promise<void> {
+  if (isElectron()) {
+    await window.kiosk.logFailedScan(rawBarcode, parserError);
+  }
+}
+
+export async function getFailedScans(limit: number = 50): Promise<FailedScan[]> {
+  if (isElectron()) {
+    return window.kiosk.getFailedScans(limit);
+  }
+  return [];
+}
+
 // Auto-update functions
 export async function checkForUpdates(): Promise<{ updateAvailable: boolean; info?: any; error?: string }> {
   if (isElectron()) {

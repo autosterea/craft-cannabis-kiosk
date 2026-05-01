@@ -29,6 +29,15 @@ export interface OfflineQueueEntry {
   synced: number;
 }
 
+// Failed-scan capture (Iowa / out-of-state / partial-WA debugging — v2.1.4)
+export interface FailedScan {
+  id: number;
+  raw_barcode: string;
+  parser_error: string;
+  venue_id: string;
+  created_at: string;
+}
+
 // Get database path in user's AppData
 function getDbPath(): string {
   const userDataPath = app.getPath('userData');
@@ -96,7 +105,52 @@ export function initDatabase(): void {
     );
   `);
 
+  // Failed-scan capture for parser debugging (v2.1.4+)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS failed_scans (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      raw_barcode TEXT NOT NULL,
+      parser_error TEXT NOT NULL,
+      venue_id TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_failed_scans_created ON failed_scans(created_at);
+  `);
+
+  // Drop failed_scans rows older than 30 days at startup
+  try {
+    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const result = db.prepare(`DELETE FROM failed_scans WHERE created_at < ?`).run(cutoff);
+    if (result.changes > 0) {
+      console.log(`Cleaned up ${result.changes} failed_scans rows older than 30 days`);
+    }
+  } catch (e: any) {
+    console.error('failed_scans cleanup error:', e.message);
+  }
+
   console.log('Database initialized successfully');
+}
+
+// Failed-scan helpers
+export function logFailedScan(rawBarcode: string, parserError: string, venueId: string): void {
+  if (!db) throw new Error('Database not initialized');
+  // Truncate raw barcode to 2KB to keep rows reasonable; PDF417 is ~500 bytes typically
+  const truncated = (rawBarcode || '').slice(0, 2048);
+  db.prepare(`
+    INSERT INTO failed_scans (raw_barcode, parser_error, venue_id, created_at)
+    VALUES (?, ?, ?, ?)
+  `).run(truncated, parserError, venueId, new Date().toISOString());
+}
+
+export function getRecentFailedScans(limit: number = 50): FailedScan[] {
+  if (!db) throw new Error('Database not initialized');
+  return db.prepare(`
+    SELECT id, raw_barcode, parser_error, venue_id, created_at
+    FROM failed_scans
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(limit) as FailedScan[];
 }
 
 // Normalize phone number (strip non-digits, take last 10)

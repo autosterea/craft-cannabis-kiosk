@@ -43,6 +43,10 @@ contextBridge.exposeInMainWorld('kiosk', {
     return () => ipcRenderer.removeListener('incogweedo-enabled-changed', handler);
   },
 
+  // Failed-scan capture (v2.1.4+)
+  logFailedScan: (rawBarcode, parserError) => ipcRenderer.invoke('log-failed-scan', rawBarcode, parserError),
+  getFailedScans: (limit) => ipcRenderer.invoke('get-failed-scans', limit),
+
   // Blocked words
   getBlockedWords: () => ipcRenderer.invoke('get-blocked-words'),
   setBlockedWords: (words) => ipcRenderer.invoke('set-blocked-words', words),

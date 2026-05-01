@@ -5,7 +5,7 @@ import Store from 'electron-store';
 import pkg from 'electron-updater';
 const { autoUpdater } = pkg;
 import { getVenueList, getVenueById, INTEGRATOR_TOKEN, Venue } from './config/venues.js';
-import { initDatabase, getCustomerByPhone, getCustomerByName, getCustomerByLicense, upsertCustomers, addOfflineQueueEntry, getUnsyncedEntries, markEntrySynced, getTotalCustomerCount, searchCustomerByPhoneGlobal, getVenueIdsInDb, getSampleCustomers, getCustomersWithPhoneCount } from './services/database.js';
+import { initDatabase, getCustomerByPhone, getCustomerByName, getCustomerByLicense, upsertCustomers, addOfflineQueueEntry, getUnsyncedEntries, markEntrySynced, getTotalCustomerCount, searchCustomerByPhoneGlobal, getVenueIdsInDb, getSampleCustomers, getCustomersWithPhoneCount, logFailedScan, getRecentFailedScans } from './services/database.js';
 import { SyncService } from './services/sync.js';
 import { PosabitService } from './services/posabit.js';
 
@@ -475,6 +475,26 @@ function setupIpcHandlers() {
       mainWindow.webContents.send('incogweedo-enabled-changed', enabled);
     }
     return enabled;
+  });
+
+  // Failed-scan capture (v2.1.4+) — log raw AAMVA failures for debugging Iowa/out-of-state IDs
+  ipcMain.handle('log-failed-scan', (_event, rawBarcode: string, parserError: string) => {
+    const venueId = store.get('selectedVenue') as string;
+    try {
+      logFailedScan(rawBarcode, parserError, venueId || 'unknown');
+    } catch (e) {
+      console.error('Failed to log failed scan:', e);
+    }
+    return { ok: true };
+  });
+
+  ipcMain.handle('get-failed-scans', (_event, limit?: number) => {
+    try {
+      return getRecentFailedScans(limit || 50);
+    } catch (e) {
+      console.error('Failed to fetch failed scans:', e);
+      return [];
+    }
   });
 
   // Blocked words

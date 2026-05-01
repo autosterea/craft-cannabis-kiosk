@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Customer } from '../../types';
-import { lookupCustomerByName, lookupCustomerByLicense, lookupCustomerByDobLastname, lookupCustomer, fetchCustomerById, updateCustomer, createCustomer, getQueue, KioskCustomer } from '../../services/kioskApi';
+import { lookupCustomerByName, lookupCustomerByLicense, lookupCustomerByDobLastname, lookupCustomer, fetchCustomerById, updateCustomer, createCustomer, getQueue, logFailedScan, KioskCustomer } from '../../services/kioskApi';
 import TouchKeyboard from './TouchKeyboard';
 
 interface IDScanProps {
@@ -333,6 +333,7 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
 
     // Check if this looks like a valid DL barcode
     if (!isLikelyValidBarcode(scanData)) {
+      logFailedScan(scanData, 'not_aamva_marker').catch(() => {});
       setStatus('INVALID_SCAN');
       // Auto-reset after 4 seconds
       setTimeout(() => {
@@ -346,6 +347,7 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
     const parsed = parseDriversLicense(scanData);
 
     if (!parsed) {
+      logFailedScan(scanData, 'parse_returned_null').catch(() => {});
       setStatus('INVALID_SCAN');
       // Auto-reset after 4 seconds
       setTimeout(() => {
@@ -357,6 +359,12 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
 
     // Additional validation: must have at least first name AND (last name OR DOB)
     if (!parsed.firstName || (!parsed.lastName && !parsed.dateOfBirth)) {
+      const missing = [
+        !parsed.firstName ? 'firstName' : null,
+        !parsed.lastName ? 'lastName' : null,
+        !parsed.dateOfBirth ? 'dateOfBirth' : null,
+      ].filter(Boolean).join(',');
+      logFailedScan(scanData, `missing_required_fields:${missing}`).catch(() => {});
       setStatus('INVALID_SCAN');
       setTimeout(() => {
         resetScan();
