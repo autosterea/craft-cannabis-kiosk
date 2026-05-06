@@ -8,6 +8,7 @@ import { getVenueList, getVenueById, INTEGRATOR_TOKEN, Venue } from './config/ve
 import { initDatabase, getCustomerByPhone, getCustomerByName, getCustomerByLicense, upsertCustomers, addOfflineQueueEntry, getUnsyncedEntries, markEntrySynced, getTotalCustomerCount, searchCustomerByPhoneGlobal, getVenueIdsInDb, getSampleCustomers, getCustomersWithPhoneCount, logFailedScan, getRecentFailedScans } from './services/database.js';
 import { SyncService } from './services/sync.js';
 import { PosabitService } from './services/posabit.js';
+import { TelemetryService, getOrCreateKioskId } from './services/telemetry.js';
 
 // ESM __dirname equivalent
 const __filename = fileURLToPath(import.meta.url);
@@ -69,6 +70,13 @@ interface StoreSchema {
   showHomeInfoPanel: boolean;
   incogweedoEnabled: boolean;
   blockedWords: string[];
+  // Telemetry / fleet monitoring (v2.1.5+)
+  kioskId: string | null;
+  telemetryEndpoint: string | null;
+  telemetrySecret: string | null;
+  allTimeCheckIns: number;
+  // Queue web app side-channel for TV display / Incogweedo render
+  queueApiBase: string | null;
 }
 
 // Persistent settings store
@@ -80,6 +88,11 @@ const store = new Store<StoreSchema>({
     showHomeInfoPanel: true,
     incogweedoEnabled: false,
     blockedWords: DEFAULT_BLOCKED_WORDS,
+    kioskId: null,
+    telemetryEndpoint: null,
+    telemetrySecret: null,
+    allTimeCheckIns: 0,
+    queueApiBase: null,
   }
 });
 
@@ -92,6 +105,7 @@ if (!storedWords || storedWords.length < DEFAULT_BLOCKED_WORDS.length) {
 let mainWindow: BrowserWindow | null = null;
 let syncService: SyncService | null = null;
 let posabitService: PosabitService | null = null;
+let telemetryService: TelemetryService | null = null;
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
@@ -216,6 +230,36 @@ function initializeServices(venueId: string) {
 
   // Start background sync
   syncService.startBackgroundSync();
+
+  // Telemetry — only enabled when both endpoint + secret are configured.
+  // Resolution order: persisted electron-store → env vars (dev) → hardcoded prod defaults.
+  // Kiosks installed in the field auto-configure to prod via the hardcoded fallback.
+  const PROD_TELEMETRY_URL = 'https://craft.autosterea.com/api/kiosks/heartbeat';
+  const PROD_TELEMETRY_SECRET = 'c511f4d55a2aa4e3e31020c6a26e0294a46ce178c2ef9a03e37cd92cf02a2545';
+  const endpoint = (store.get('telemetryEndpoint') as string | null) || process.env.KIOSK_TELEMETRY_URL || PROD_TELEMETRY_URL;
+  const secret = (store.get('telemetrySecret') as string | null) || process.env.KIOSK_TELEMETRY_SECRET || PROD_TELEMETRY_SECRET;
+  if (endpoint && secret) {
+    const kioskId = getOrCreateKioskId({
+      get: (k) => store.get(k as keyof StoreSchema),
+      set: (k, v) => store.set(k as keyof StoreSchema, v as never),
+    });
+    telemetryService?.stop();
+    telemetryService = new TelemetryService({
+      kioskId,
+      endpoint,
+      secret,
+      getVenueId: () => store.get('selectedVenue') as string | null,
+      getLastSync: () => ({
+        at: (store.get('lastSyncTime') as string | null) || null,
+        count: syncService ? syncService.customerCount : null,
+      }),
+      initialAllTimeCheckIns: (store.get('allTimeCheckIns') as number | undefined) ?? 0,
+    });
+    telemetryService.start();
+    console.log('[telemetry] started — heartbeat to', endpoint, 'every 5 min, kioskId', kioskId);
+  } else {
+    console.log('[telemetry] disabled (no endpoint/secret configured)');
+  }
 }
 
 // IPC Handlers
@@ -394,6 +438,64 @@ function setupIpcHandlers() {
     return posabitService.getQueue();
   });
 
+  // Maps kiosk venue ids → queue-web-app location ids (which are lowercase-hyphenated and use different spellings)
+  const KIOSK_TO_QUEUE_LOCATION: Record<string, string> = {
+    tacoma: 'tacoma',
+    andresen: 'andersen',
+    millPlain: 'mill-plain',
+    southWenatchee: 'south-wenatchee',
+    wenatchee: 'north-wenatchee',
+  };
+
+  // Fire-and-forget POST to the queue web app so its TV display (and the Incogweedo render) gets the entry too.
+  // POSaBIT remains the source of truth for till workflow; this is a side-channel for the public TV.
+  async function postToQueueWebApp(venueId: string, data: any, posabitQueueId?: number): Promise<void> {
+    // Resolution order: persisted electron-store → env vars (dev) → hardcoded prod default.
+    const PROD_QUEUE_API_BASE = 'https://craft.autosterea.com/api';
+    const baseUrl = (store.get('queueApiBase') as string | null) || process.env.KIOSK_QUEUE_API_BASE || PROD_QUEUE_API_BASE;
+    if (!baseUrl) return; // Side-channel disabled when not configured
+    const mapped = KIOSK_TO_QUEUE_LOCATION[venueId];
+    if (!mapped) {
+      console.warn(`[queue-web-app] no location mapping for venue ${venueId} — skipping`);
+      return;
+    }
+    // Map kiosk's method to queue-web-app's check-in type
+    const method = (data.method || '').toUpperCase();
+    let type: 'guest' | 'loyalty' | 'online' = 'guest';
+    if (method === 'PHONE' || data.loyaltyStatus === 'Member' || data.loyaltyStatus === 'Gold' || data.loyaltyStatus === 'Platinum') type = 'loyalty';
+    else if (method === 'APP' || data.isOnlineOrder) type = 'online';
+
+    // Pull a 1-char last-initial out of the payload (App.tsx joins it onto name; we want it separately for the queue-web-app's `initial` field)
+    const initial = (data.lastNameInitial || data.name?.split(' ')[1]?.[0] || data.name?.[0] || 'G').toString().slice(0, 2).toUpperCase();
+    const firstName = (data.name?.split(' ')[0] || data.name || 'Guest').toString();
+
+    const body: Record<string, unknown> = {
+      name: firstName,
+      initial,
+      type,
+    };
+    if (data.phone) body.phone = data.phone;
+    if (data.incognito) body.incognito = true;
+    if (data.displayNumber) body.displayNumber = data.displayNumber;
+    if (typeof posabitQueueId === 'number') body.posabitQueueId = posabitQueueId;
+
+    try {
+      const url = `${baseUrl.replace(/\/$/, '')}/queue/${mapped}/check-in`;
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        console.warn(`[queue-web-app] check-in POST failed: ${r.status} ${await r.text().catch(() => '')}`);
+      } else {
+        console.log(`[queue-web-app] check-in posted to ${mapped}${data.incognito ? ` (incognito #${data.displayNumber})` : ''}`);
+      }
+    } catch (e: any) {
+      console.warn(`[queue-web-app] check-in error: ${e.message}`);
+    }
+  }
+
   ipcMain.handle('add-to-queue', async (_event, data: any) => {
     const venueId = store.get('selectedVenue') as string;
     console.log('[add-to-queue] incoming data:', JSON.stringify(data));
@@ -419,6 +521,14 @@ function setupIpcHandlers() {
     try {
       const result = await posabitService.addToQueue(posabitPayload);
       console.log('[add-to-queue] POSaBIT success — customer_queue_id:', result.customer_queue_id);
+      // Telemetry: count successful check-ins, persist all-time count for survival across restarts
+      if (telemetryService) {
+        telemetryService.recordCheckIn();
+        store.set('allTimeCheckIns', telemetryService.allTimeCheckIns);
+      }
+      // Side-channel: also tell the queue web app so its TV display + Incogweedo render fire (fail-silent)
+      // Pass POSaBIT customer_queue_id as the join key so the TV's POSaBIT-sourced response can be overlaid.
+      postToQueueWebApp(venueId, data, result.customer_queue_id).catch(() => {});
       return result;
     } catch (error) {
       console.error('[add-to-queue] POSaBIT failed:', (error as Error).message);
@@ -485,6 +595,7 @@ function setupIpcHandlers() {
     } catch (e) {
       console.error('Failed to log failed scan:', e);
     }
+    telemetryService?.recordFailedScan();
     return { ok: true };
   });
 

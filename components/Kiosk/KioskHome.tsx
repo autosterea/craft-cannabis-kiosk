@@ -143,7 +143,7 @@ const KioskHome: React.FC<KioskHomeProps> = ({ onCheckIn, lastCheckIn }) => {
               Welcome, <span className="font-bold text-white">{lastCheckIn.name}</span>.
             </p>
             <p className="text-xl text-gold font-bold mb-4">Your online order is ready.</p>
-            <p className="text-lg text-zinc-400">Please proceed to the counter — a budtender will assist you shortly.</p>
+            <p className="text-lg text-zinc-400">Please head to <span className="font-bold text-white">Till 5</span> — a budtender will assist you shortly.</p>
           </div>
         </div>
       );

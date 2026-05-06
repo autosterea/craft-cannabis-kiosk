@@ -13,6 +13,11 @@ interface StoreSchema {
   showHomeInfoPanel: boolean;
   incogweedoEnabled: boolean;
   blockedWords: string[];
+  kioskId: string | null;
+  telemetryEndpoint: string | null;
+  telemetrySecret: string | null;
+  allTimeCheckIns: number;
+  queueApiBase: string | null;
 }
 
 export class SyncService {
