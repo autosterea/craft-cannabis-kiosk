@@ -113,6 +113,7 @@ declare global {
       onIncogweedoEnabledChanged: (callback: (enabled: boolean) => void) => () => void;
       logFailedScan: (rawBarcode: string, parserError: string) => Promise<{ ok: boolean }>;
       getFailedScans: (limit?: number) => Promise<Array<{ id: number; raw_barcode: string; parser_error: string; venue_id: string; created_at: string }>>;
+      lookupIncomingOrder: (customerId: number) => Promise<any | null>;
       toggleFullscreen: () => Promise<boolean>;
       getFullscreen: () => Promise<boolean>;
       getBlockedWords: () => Promise<string[]>;

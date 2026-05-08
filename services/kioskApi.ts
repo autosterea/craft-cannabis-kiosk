@@ -190,6 +190,7 @@ export async function addToQueue(data: {
   customerId?: number;
   incognito?: boolean;
   displayNumber?: string;
+  source?: 'walk_in' | 'order_ahead';
 }): Promise<any> {
   if (isElectron()) {
     return window.kiosk.addToQueue(data);
@@ -197,75 +198,36 @@ export async function addToQueue(data: {
 
   // Web fallback
   const { addToQueue: webAddToQueue } = await import('./posabit');
-  return webAddToQueue(data.name, 'walk_in', data.phone);
+  return webAddToQueue(data.name, data.source === 'order_ahead' ? 'order_ahead' : 'walk_in', data.phone);
 }
 
-// Check if a customer has a pending online order in the queue
-export async function checkForOnlineOrder(customerName: string, customerId?: number): Promise<QueueItem | null> {
+// v2.1.6+ — Check if a customer has a pending incoming (online) order via POSaBIT's
+// /api/v3/incoming_orders endpoint (Andy Sweet, May 2026). Replaces the old approach
+// that filtered customer_queues by source=order_ahead — that source is never set by
+// Craft's online ordering system, so the old check always returned null.
+export async function checkForOnlineOrder(customerName: string, customerId?: number): Promise<{
+  reference_no?: string;
+  first_name?: string;
+  last_name?: string;
+  source?: string;
+  aasm_state?: string;
+  delivered_at?: string | null;
+} | null> {
+  if (!customerId) {
+    console.log('[OnlineOrder] No customerId — skipping incoming_orders lookup');
+    return null;
+  }
+  if (!isElectron()) return null;
   try {
-    const response = await getQueue();
-    if (!response?.customer_queues) {
-      console.log('[OnlineOrder] No queue data returned');
-      return null;
-    }
-
-    // Unwrap queue items if wrapped in { customer_queue: {...} } (POSaBIT wraps objects)
-    const queueItems: QueueItem[] = response.customer_queues.map((item: any) =>
-      item.customer_queue ? item.customer_queue : item
-    );
-
-    console.log('[OnlineOrder] Queue has', queueItems.length, 'items. Looking for online orders...');
-
-    // Only check open/processing order_ahead entries
-    const onlineOrders = queueItems.filter(
-      q => q.source === 'order_ahead' && (q.aasm_state === 'open' || q.aasm_state === 'processing')
-    );
-
-    console.log('[OnlineOrder] Found', onlineOrders.length, 'pending online orders:',
-      onlineOrders.map(q => `${q.name} (ID:${q.customer_id}, state:${q.aasm_state})`).join(', ')
-    );
-
-    if (onlineOrders.length === 0) return null;
-
-    // Match by customer_id first (most reliable)
-    if (customerId) {
-      const match = onlineOrders.find(q => q.customer_id === customerId);
-      if (match) {
-        console.log('[OnlineOrder] Matched by customer_id:', customerId);
-        return match;
-      }
-    }
-
-    // Fallback: match by first name + last initial
-    // customerName is typically "FirstName L" (first name + last initial from kiosk)
-    // Queue name is typically "FirstName LastName" (full name from POSaBIT)
-    const nameParts = customerName.trim().toUpperCase().split(/\s+/);
-    const firstName = nameParts[0] || '';
-    const lastInitial = nameParts[1]?.[0] || ''; // Just the first character
-
-    console.log('[OnlineOrder] Name matching: firstName=', firstName, 'lastInitial=', lastInitial);
-
-    const nameMatch = onlineOrders.find(q => {
-      const queueParts = q.name.trim().toUpperCase().split(/\s+/);
-      const queueFirst = queueParts[0] || '';
-      const queueLastInitial = queueParts.length > 1 ? queueParts[queueParts.length - 1][0] : '';
-
-      // Match first name exactly, and last initial if we have both
-      const firstMatch = queueFirst === firstName;
-      const lastMatch = !lastInitial || !queueLastInitial || lastInitial === queueLastInitial;
-
-      return firstMatch && lastMatch;
-    });
-
-    if (nameMatch) {
-      console.log('[OnlineOrder] Matched by name:', nameMatch.name);
+    const order = await window.kiosk.lookupIncomingOrder(customerId);
+    if (order) {
+      console.log('[OnlineOrder] Matched incoming order — ref:', order.reference_no, 'state:', order.aasm_state);
     } else {
-      console.log('[OnlineOrder] No name match found for:', customerName);
+      console.log('[OnlineOrder] No incoming order found for customer_id', customerId);
     }
-
-    return nameMatch || null;
+    return order || null;
   } catch (err) {
-    console.error('[OnlineOrder] Failed to check for online orders:', err);
+    console.error('[OnlineOrder] lookup failed:', err);
     return null;
   }
 }

@@ -207,29 +207,14 @@ const App: React.FC = () => {
         ? `${customerData.name} ${customerData.lastNameInitial}`
         : customerData.name || 'Guest';
 
-      // Check for pending online order before adding to queue
+      // Check for pending incoming order (online order) — v2.1.6+ uses POSaBIT incoming_orders endpoint.
+      // If matched, we still add to POSaBIT customer_queues with source='order_ahead' so the queue TV
+      // pins them to the top with the green ONLINE ORDER badge. POSaBIT incoming_orders is a separate
+      // system from customer_queues — placing the queue entry is what makes them visible on the TV.
       const onlineOrder = await checkForOnlineOrder(fullName, customerData.customerId);
+      const checkInSource: 'walk_in' | 'order_ahead' = onlineOrder ? 'order_ahead' : 'walk_in';
 
-      if (onlineOrder) {
-        // Customer has a pending online order — don't add to queue again
-        setLastCheckIn({
-          id: onlineOrder.customer_queue_id.toString(),
-          name: customerData.name || 'Guest',
-          lastNameInitial: customerData.lastNameInitial || '',
-          checkInTime: new Date(),
-          method: 'APP',
-          loyaltyStatus: customerData.loyaltyStatus || 'Guest',
-          status: 'Waiting',
-          isOnlineOrder: true,
-        });
-
-        // Show online order confirmation for longer (5 seconds)
-        setTimeout(() => setLastCheckIn(null), 5000);
-        setLoading(false);
-        return;
-      }
-
-      // Normal walk-in flow — add to queue (POSaBIT always gets the real name; incognito only affects the queue TV display)
+      // Add to queue (POSaBIT always gets the real name; incognito only affects the queue TV display).
       const result = await addToQueue({
         name: fullName,
         phone: customerData.phone,
@@ -237,7 +222,28 @@ const App: React.FC = () => {
         customerId: customerData.customerId,
         incognito: customerData.incognito,
         displayNumber: customerData.displayNumber,
+        source: checkInSource,
       });
+
+      if (onlineOrder) {
+        // Show the online-order confirmation regardless of whether POSaBIT 422'd "already in queue"
+        // (the add-to-queue handler will still apply the Incogweedo overlay against the existing entry).
+        setLastCheckIn({
+          id: result.customer_queue_id?.toString() || Date.now().toString(),
+          name: customerData.name || 'Guest',
+          lastNameInitial: customerData.lastNameInitial || '',
+          checkInTime: new Date(),
+          method: 'APP',
+          loyaltyStatus: customerData.loyaltyStatus || 'Guest',
+          status: 'Waiting',
+          isOnlineOrder: true,
+          incognito: customerData.incognito,
+          displayNumber: customerData.displayNumber,
+        });
+        setTimeout(() => setLastCheckIn(null), 5000);
+        setLoading(false);
+        return;
+      }
 
       // Handle offline mode
       if (result.offline) {

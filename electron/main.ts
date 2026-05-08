@@ -531,6 +531,24 @@ function setupIpcHandlers() {
       postToQueueWebApp(venueId, data, result.customer_queue_id).catch(() => {});
       return result;
     } catch (error) {
+      const msg = (error as Error).message || '';
+      // v2.1.6+ — when POSaBIT 422s "already in queue", the customer IS in POSaBIT (just not double-added).
+      // Look up their existing queue entry so we can still apply the Incogweedo overlay against it.
+      if (msg.includes('already in queue') && data.customerId) {
+        try {
+          const existing = await posabitService.findActiveQueueEntryByCustomerId(data.customerId);
+          if (existing) {
+            console.log('[add-to-queue] customer already in queue — overlaying onto existing customer_queue_id:', existing.customer_queue_id);
+            if (telemetryService) {
+              // Don't double-count check-ins — the original add already counted. Just record the failed scan if it was incognito retry.
+            }
+            postToQueueWebApp(venueId, data, existing.customer_queue_id).catch(() => {});
+            return { ...existing, alreadyInQueue: true };
+          }
+        } catch (lookupErr) {
+          console.warn('[add-to-queue] failed to find existing queue entry on 422:', (lookupErr as Error).message);
+        }
+      }
       console.error('[add-to-queue] POSaBIT failed:', (error as Error).message);
       try {
         addOfflineQueueEntry({ ...data, venue_id: venueId });
@@ -585,6 +603,17 @@ function setupIpcHandlers() {
       mainWindow.webContents.send('incogweedo-enabled-changed', enabled);
     }
     return enabled;
+  });
+
+  // v2.1.6+ — Look up a customer's pending incoming (online) order via Andy's new endpoint.
+  ipcMain.handle('lookup-incoming-order', async (_event, customerId: number) => {
+    if (!posabitService || !customerId) return null;
+    try {
+      return await posabitService.getIncomingOrderForCustomer(customerId);
+    } catch (e) {
+      console.error('[lookup-incoming-order] error:', e);
+      return null;
+    }
   });
 
   // Failed-scan capture (v2.1.4+) — log raw AAMVA failures for debugging Iowa/out-of-state IDs

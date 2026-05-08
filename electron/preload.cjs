@@ -47,6 +47,9 @@ contextBridge.exposeInMainWorld('kiosk', {
   logFailedScan: (rawBarcode, parserError) => ipcRenderer.invoke('log-failed-scan', rawBarcode, parserError),
   getFailedScans: (limit) => ipcRenderer.invoke('get-failed-scans', limit),
 
+  // Online-order lookup via POSaBIT incoming_orders (v2.1.6+)
+  lookupIncomingOrder: (customerId) => ipcRenderer.invoke('lookup-incoming-order', customerId),
+
   // Blocked words
   getBlockedWords: () => ipcRenderer.invoke('get-blocked-words'),
   setBlockedWords: (words) => ipcRenderer.invoke('set-blocked-words', words),

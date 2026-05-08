@@ -179,6 +179,63 @@ export class PosabitService {
     return response.json() as Promise<PosabitQueueItem>;
   }
 
+  // v2.1.6+ — Look up an incoming (online) order for a customer.
+  // Endpoint per Andy Sweet (May 2026): GET /api/v3/incoming_orders (NOT under /venue/).
+  // Filter to undelivered orders (delivered_at IS NULL) so we don't match historical pickups.
+  async getIncomingOrderForCustomer(customerId: number): Promise<any | null> {
+    const url = `${BASE_URL}/incoming_orders?q[customer_id_eq]=${customerId}&q[delivered_at_null]=1&per_page=5`;
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': this.authHeader,
+          'Content-Type': 'application/json',
+        },
+      });
+      if (!response.ok) {
+        console.warn(`[incoming_orders] lookup failed: ${response.status}`);
+        return null;
+      }
+      const data = await response.json() as any;
+      const items = (data.incoming_orders || []).map((item: any) => item.incoming_order || item);
+      if (items.length === 0) return null;
+      // Pick the most-recently-created undelivered order
+      items.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      const order = items[0];
+      // Skip orders that are explicitly cancelled / expired (state machine signals "won't be picked up")
+      const dead = ['cancelled', 'canceled', 'expired', 'rejected'];
+      if (dead.includes((order.aasm_state || '').toLowerCase())) return null;
+      return order;
+    } catch (e: any) {
+      console.warn(`[incoming_orders] lookup error: ${e.message}`);
+      return null;
+    }
+  }
+
+  // v2.1.6+ — Find a customer's active queue entry (used when POSaBIT 422s "already in queue"
+  // so we can still apply the Incogweedo overlay against the EXISTING queue row).
+  async findActiveQueueEntryByCustomerId(customerId: number): Promise<PosabitQueueItem | null> {
+    const url = `${BASE_URL}/venue/customer_queues?q[customer_id_eq]=${customerId}&q[aasm_state_in][]=open&q[aasm_state_in][]=processing&per_page=5`;
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': this.authHeader,
+          'Content-Type': 'application/json',
+        },
+      });
+      if (!response.ok) return null;
+      const data = await response.json() as any;
+      const items = (data.customer_queues || []).map((c: any) => c.customer_queue || c);
+      if (items.length === 0) return null;
+      // Pick the most-recently-created (in case of duplicates)
+      items.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      return items[0];
+    } catch {
+      return null;
+    }
+  }
+
   // Create new customer
   async createCustomer(data: {
     firstName: string;
