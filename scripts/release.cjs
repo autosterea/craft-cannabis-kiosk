@@ -31,6 +31,24 @@ const notes = process.env.RELEASE_NOTES || process.argv.slice(2).join(' ') || `R
 
 console.log(`\n=== Craft Kiosk Release ${TAG} ===\n`);
 
+// PRE-RELEASE GATE (added after the v2.1.14 wrong-account incident, 2026-07-11):
+// build a fresh renderer bundle and run the runtime test suites (tests/runtime/) against it.
+// scan-safety.test.cjs guards the always-on scanner inputs; checkin-guards.test.cjs guards
+// the no-fake-success + phone-carry-over behavior. A failing suite BLOCKS the release.
+if (process.env.SKIP_RUNTIME_TESTS === '1') {
+  console.warn('\n!!! SKIP_RUNTIME_TESTS=1 — PUBLISHING WITHOUT THE RUNTIME TEST GATE !!!');
+  console.warn('!!! Only do this if the gate itself is broken, never to save time.  !!!\n');
+} else {
+  console.log('Pre-release gate: building renderer + running runtime tests...');
+  run('npm run build');
+  try {
+    run('npm run test:runtime');
+  } catch (_) {
+    fail('runtime tests failed — fix the app (or the test) before releasing. See output above.');
+  }
+  console.log('Pre-release gate passed ✓\n');
+}
+
 if (!fs.existsSync(path.join(RELEASE_DIR, SPACED))) {
   console.log('Installer missing — running electron:build first');
   run('npm run electron:build');

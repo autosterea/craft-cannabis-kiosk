@@ -2,9 +2,15 @@
 
 Windows desktop application for customer check-in at Craft Cannabis retail locations. Built with Electron, React, and SQLite.
 
+## June 24, 2026 Call Pointer
+
+Canonical app-by-app call notes live in root `WORKSPACE_STATUS.md`.
+
+Kiosk status from the June 24 call: stable, no new issues raised this week. Confirm carried-over items from the prior week only: guest screen auto-timeout, scan button/reset behavior, and scan-ID pane placement if those were not already shipped. DopeTech/product-review work is tracked outside the kiosk unless explicitly requested.
+
 ## Features
 
-- **Multi-venue support** - All 6 Craft Cannabis locations with venue selector
+- **Multi-venue support** - All 5 Craft Cannabis locations with venue selector
 - **Offline-first** - Local SQLite database with background sync
 - **Driver's License scanning** - AAMVA PDF417 barcode support for fast check-in
 - **POSaBIT integration** - Real-time queue management and customer lookup
@@ -17,10 +23,9 @@ Windows desktop application for customer check-in at Craft Cannabis retail locat
 |-------|----------|
 | Craft Cannabis Tacoma | Tacoma, WA |
 | Craft Cannabis Andresen | Vancouver, WA |
-| Craft Cannabis Leavenworth | Leavenworth, WA |
 | Craft Cannabis Mill Plain | Vancouver, WA |
-| Craft Cannabis South Wenatchee | Wenatchee, WA |
-| Craft Cannabis Wenatchee | Wenatchee, WA |
+| Craft Cannabis Wenatchee South | Wenatchee, WA |
+| Craft Cannabis Wenatchee North | Wenatchee, WA |
 
 ## Check-in Flows
 
@@ -83,6 +88,33 @@ This starts Vite dev server and Electron concurrently with hot reload.
 
 \
 Output: 
+## Testing (mandatory before release)
+
+Runtime test suites live in `tests/runtime/` and run against the **built** renderer (`dist/`) in real Chrome with a mocked `window.kiosk`:
+
+- `scan-safety.test.cjs` — guards against the v2.1.14 wrong-account incident (2026-07-11): asserts short numeric input on the always-on HOME scanner and the ID Scan screen NEVER checks anyone in; the Dope/loyalty QR works only on the opt-in QR Code Entry screen; DL barcode flows are intact. 12 assertions.
+- `checkin-guards.test.cjs` — the v2.1.13 guarantees: no fake "checked in" card when POSaBIT didn't queue the customer, phone carry-over from the Phone screen, and no stale-phone PII bleed between customers. 12 assertions.
+
+Run locally:
+
+```
+npm run build
+npm run test:runtime
+```
+
+Requires a local Chrome install (`CHROME_PATH` env overrides `C:\Program Files\Google\Chrome\Application\chrome.exe`).
+
+`npm run release` runs this gate automatically and **refuses to publish** if any assertion fails. `SKIP_RUNTIME_TESTS=1` bypasses it — only for when the gate itself is broken, never to save time.
+
+### Scanner-input safety rule (do not regress)
+
+Two production incidents came from changes to the scan path:
+
+1. **v2.1.9 (June 2026):** a button prompt inserted between ID scan and queue-add froze kiosks at two stores. The ID-scan check-in must stay instant and hands-free; every mid-check-in screen needs an auto-timeout.
+2. **v2.1.14 (July 2026):** the always-on home scanner accepted any 4-12 digit number as a POSaBIT customer id and silently checked in whoever owned it. Wrong customers got checked in from stray typed/scanned digits.
+
+The rule: **an always-on input may only auto-act on high-entropy, format-validated data** (AAMVA DL barcodes, 100+ chars). Anything short or ambiguous (numeric ids, phone numbers) must require an explicit opt-in screen the customer navigates to. If you add a new barcode/QR type, add a scan-safety test proving stray input can't trigger it from Home or ID Scan.
+
 ## Releasing Updates
 
 ### Manual Release
@@ -105,13 +137,6 @@ The app checks for updates on launch via GitHub releases:
 
 Go to: https://github.com/autosterea/craft-cannabis-kiosk/releases/latest
 
-Or via PowerShell:
-\Windows PowerShell
-Copyright (C) Microsoft Corporation. All rights reserved.
-
-Install the latest PowerShell for new features and improvements! https://aka.ms/PSWindows
-
-PS C:\Users\ravik\OneDrive\Desktop\Claude> 
 ### First Launch
 
 1. Run the installer (one-click install)
@@ -186,7 +211,9 @@ Base URL:
 
 ## Version History
 
-### v1.1.0 (Current)
+Current version: **v2.1.15** (2026-07-11) — hotfix reverting v2.1.14's home-scanner numeric acceptance (wrong-account check-ins). Full history since v1.1.0 lives on the [GitHub releases page](https://github.com/autosterea/craft-cannabis-kiosk/releases).
+
+### v1.1.0
 - Fixed DL barcode parsing for address fields
 - Added invalid barcode detection with visual guide
 - DL demographics now saved even when declining loyalty

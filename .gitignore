@@ -22,9 +22,37 @@ release4/
 # API tokens (secrets)
 electron/config/tokens.ts
 
+# SECRETS GUARD (2026-07-11): a stray tsc run compiled electron/ sources to the repo ROOT.
+# Root tokens.js contains REAL POSaBIT tokens and main.js contains the telemetry secret —
+# and this repo is PUBLIC. Never let these get committed. Delete them when seen.
+tokens.js
+/main.js
+/preload.js
+/preload.cjs
+/venues.js
+/database.js
+/posabit.js
+/sync.js
+/telemetry.js
+
+# Android/Capacitor build outputs
+android/.gradle/
+android/build/
+android/app/build/
+android/app/release/
+android/local.properties
+android/capacitor-cordova-android-plugins/
+*.keystore
+# Capacitor copies the built dist/ here on `cap sync` — the minified bundle EMBEDS the real
+# POSaBIT tokens (renderer-side on Android). Verified 2026-07-11. Never commit it.
+android/app/src/main/assets/public/
+
 # SQLite database (local development)
 *.db
 *.sqlite
+
+# Local working notes (internal ops detail — not for the public repo)
+/STATUS-*.md
 
 # Editor directories and files
 .vscode/*

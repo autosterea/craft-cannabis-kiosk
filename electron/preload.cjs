@@ -47,8 +47,24 @@ contextBridge.exposeInMainWorld('kiosk', {
   logFailedScan: (rawBarcode, parserError) => ipcRenderer.invoke('log-failed-scan', rawBarcode, parserError),
   getFailedScans: (limit) => ipcRenderer.invoke('get-failed-scans', limit),
 
+  // Loyalty consent + signature capture (v2.1.9)
+  saveLoyaltyConsent: (data) => ipcRenderer.invoke('save-loyalty-consent', data),
+  getLoyaltyConsents: (limit) => ipcRenderer.invoke('get-loyalty-consents', limit),
+
   // Online-order lookup via POSaBIT incoming_orders (v2.1.6+)
   lookupIncomingOrder: (customerId) => ipcRenderer.invoke('lookup-incoming-order', customerId),
+
+  // Per-venue online-order till # (v2.1.7+) — cached from heartbeat response
+  getOnlineOrderTill: () => ipcRenderer.invoke('get-online-order-till'),
+
+  // Per-venue kiosk active flag (v2.1.8+)
+  getKioskActive: () => ipcRenderer.invoke('get-kiosk-active'),
+  setKioskActive: (active) => ipcRenderer.invoke('set-kiosk-active', active),
+  onKioskActiveChanged: (callback) => {
+    const handler = (_event, active) => callback(active);
+    ipcRenderer.on('kiosk-active-changed', handler);
+    return () => ipcRenderer.removeListener('kiosk-active-changed', handler);
+  },
 
   // Blocked words
   getBlockedWords: () => ipcRenderer.invoke('get-blocked-words'),

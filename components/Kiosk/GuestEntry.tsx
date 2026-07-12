@@ -1,8 +1,9 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Customer } from '../../types';
-import { createCustomer, lookupCustomer, updateCustomer, getBlockedWords, isNameBlocked } from '../../services/kioskApi';
+import { createCustomer, lookupCustomer, lookupCustomerByDobLastname, updateCustomer, getBlockedWords, isNameBlocked, saveLoyaltyConsent } from '../../services/kioskApi';
 import TouchKeyboard from './TouchKeyboard';
+import ConsentStep from './ConsentStep';
 
 interface GuestEntryProps {
   onComplete: (data: Partial<Customer>) => void;
@@ -19,7 +20,7 @@ interface ScannedDLData {
   gender?: 'M' | 'F' | 'X';
 }
 
-type Step = 'NAME' | 'NAME_INITIAL' | 'LOYALTY_PROMPT' | 'DL_SCAN_OPTION' | 'DL_SCANNING' | 'PHONE_ENTRY' | 'EMAIL_ENTRY' | 'CREATING';
+type Step = 'NAME' | 'NAME_INITIAL' | 'LOYALTY_PROMPT' | 'DL_SCAN_OPTION' | 'DL_SCANNING' | 'PHONE_ENTRY' | 'EMAIL_ENTRY' | 'CONSENT' | 'CREATING' | 'UNDERAGE';
 
 // Parse driver's license barcode (simplified version)
 const parseDriversLicense = (scanData: string): ScannedDLData | null => {
@@ -90,6 +91,23 @@ const parseDriversLicense = (scanData: string): ScannedDLData | null => {
   }
 };
 
+// Calculate age from DOB string (MMDDYYYY format). Returns null if unparseable.
+const calculateAge = (dob?: string): number | null => {
+  if (!dob || dob.length !== 8) return null;
+  const month = parseInt(dob.substring(0, 2), 10);
+  const day = parseInt(dob.substring(2, 4), 10);
+  const year = parseInt(dob.substring(4, 8), 10);
+  if (isNaN(month) || isNaN(day) || isNaN(year)) return null;
+  const birthDate = new Date(year, month - 1, day);
+  const today = new Date();
+  let age = today.getFullYear() - birthDate.getFullYear();
+  const monthDiff = today.getMonth() - birthDate.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+    age--;
+  }
+  return age;
+};
+
 const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
   const [step, setStep] = useState<Step>('NAME');
   const [name, setName] = useState('');
@@ -109,6 +127,13 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
   // Load blocked words on mount
   useEffect(() => {
     getBlockedWords().then(setBlockedWords).catch(() => {});
+  }, []);
+
+  // Clear any pending DL-scan debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (bufferTimeoutRef.current) clearTimeout(bufferTimeoutRef.current);
+    };
   }, []);
 
   // Validate name against blocked words whenever name changes
@@ -144,8 +169,13 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
     setPhone(cleaned);
   };
 
+  // Guard against a double-submit (e.g. the Bug-1 auto-timeout firing at the same instant as a tap)
+  const submittedRef = useRef(false);
+
   // Submit as guest (no loyalty)
   const submitAsGuest = () => {
+    if (submittedRef.current) return;
+    submittedRef.current = true;
     onComplete({
       name,
       lastNameInitial: initial || '',
@@ -170,6 +200,16 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
     submitAsGuest();
   };
 
+  // Bug 1 fix: the loyalty prompt has no exit if a guest ignores it, leaving the kiosk stuck and
+  // blocking the next customer. Auto-dismiss after 5s by treating it as "No Thanks" — they already
+  // entered their name, so we still add them to the queue. Any button tap cancels the timer.
+  useEffect(() => {
+    if (step !== 'LOYALTY_PROMPT') return;
+    const t = setTimeout(() => { submitAsGuest(); }, 5000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
+
   // User wants to scan DL for demographics
   const startDLScan = () => {
     setScanBuffer('');
@@ -192,25 +232,48 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
 
     bufferTimeoutRef.current = setTimeout(() => {
       if (value.length > 50) {
-        processDLScan(value);
+        processDLScan(value).catch(err => console.error('DL scan processing error:', err));
       }
     }, 100);
   };
 
   // Process the DL scan
-  const processDLScan = (scanData: string) => {
+  const processDLScan = async (scanData: string) => {
     const parsed = parseDriversLicense(scanData);
+    setScanBuffer('');
+    if (inputRef.current) inputRef.current.value = '';
 
     if (parsed) {
       setDlData(parsed);
       // Update name from DL
       setName(parsed.firstName);
       setInitial(parsed.lastName?.[0]?.toUpperCase() || '');
+
+      // Age gate: under-21 may only continue if they already have a loyalty account (medical patients).
+      const age = calculateAge(parsed.dateOfBirth);
+      if (age !== null && age < 21) {
+        let loyaltyOk = false;
+        try {
+          if (parsed.dateOfBirth && parsed.lastName) {
+            const dob = parsed.dateOfBirth; // MMDDYYYY
+            const birthday = `${dob.substring(4, 8)}-${dob.substring(0, 2)}-${dob.substring(2, 4)}`;
+            const res = await lookupCustomerByDobLastname(birthday, parsed.lastName);
+            if (res.found && res.customer?.loyalty_member) {
+              loyaltyOk = true;
+              setExistingCustomerId(res.customer.id); // update existing account, don't duplicate
+            }
+          }
+        } catch (e) {
+          console.error('Under-21 loyalty lookup failed:', e);
+        }
+        if (!loyaltyOk) {
+          setStep('UNDERAGE');
+          return;
+        }
+      }
     }
 
-    // Move to phone entry regardless
-    setScanBuffer('');
-    if (inputRef.current) inputRef.current.value = '';
+    // Move to phone entry (of-age, unparseable DOB, or under-21 loyalty member)
     setStep('PHONE_ENTRY');
   };
 
@@ -225,23 +288,31 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
       if (result.found && result.customer) {
         // Customer already exists - update them with loyalty + email instead of creating duplicate
         setStep('EMAIL_ENTRY');
-        // Store existing customer id so submitWithLoyalty can update instead of create
-        setExistingCustomerId(result.customer.id);
+        // Preserve a DL/DOB-matched existingCustomerId (set during the under-21 gate); only adopt
+        // the phone-lookup match if we don't already have a confirmed identity from the DL scan.
+        if (!existingCustomerId) setExistingCustomerId(result.customer.id);
       } else {
         setStep('EMAIL_ENTRY');
-        setExistingCustomerId(null);
+        // Preserve an existingCustomerId already set by the under-21 DOB+lastname match; only clear if none.
+        if (!existingCustomerId) setExistingCustomerId(null);
       }
     } catch (err) {
       console.error('Phone lookup failed:', err);
       setStep('EMAIL_ENTRY');
-      setExistingCustomerId(null);
+      if (!existingCustomerId) setExistingCustomerId(null);
     } finally {
       setLoading(false);
     }
   };
 
-  // Submit with loyalty signup (after email entry)
-  const submitWithLoyalty = async () => {
+  // Submit email — proceed to consent + signature before enrolling
+  const submitWithLoyalty = () => {
+    if (phone.length !== 10 || !email) return;
+    setStep('CONSENT');
+  };
+
+  // Customer signs consent — create/update loyalty account with terms_agreed, store signature
+  const consentAgree = async (signaturePng: string) => {
     if (phone.length !== 10 || !email) return;
 
     setStep('CREATING');
@@ -256,6 +327,7 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
         await updateCustomer(existingCustomerId, {
           loyaltyMember: true,
           marketingOptIn: true,
+          termsAgreed: true,
           email: email,
           address1: dlData?.address,
           city: dlData?.city,
@@ -273,6 +345,7 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
           telephone: phone,
           email: email,
           loyaltyOptIn: true,
+          termsAgreed: true,
           address1: dlData?.address,
           city: dlData?.city,
           state: dlData?.state,
@@ -282,6 +355,9 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
         });
         customerId = newCustomer.id;
       }
+
+      // Persist the signature as compliance proof (fire-and-forget)
+      saveLoyaltyConsent({ customerId, customerName: `${name} ${initial || ''}`.trim(), signaturePng }).catch(() => {});
 
       // Capture data before resetting state
       const completionData = {
@@ -526,18 +602,34 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
           </div>
         )}
 
-        <div className="mb-8">
-          <input
-            type="tel"
-            placeholder="(555) 555-5555"
-            value={formatPhoneDisplay(phone)}
-            onChange={handlePhoneChange}
-            className="w-full bg-black/40 border-2 border-zinc-800 rounded-2xl p-6 text-2xl text-white placeholder:text-zinc-700 focus:border-gold outline-none transition-all text-center tracking-wider"
-            autoFocus
-          />
-          <p className="text-zinc-500 text-sm mt-2">
-            We'll use this to look you up on future visits
-          </p>
+        {/* Formatted display — read-only, driven by the numpad below.
+            Bug fix v2.1.8: previously this was an <input type="tel"> which relied on the OS keyboard.
+            Touch kiosks have no OS keyboard, so customers couldn't enter their phone. Mirrors the
+            numpad pattern used in PhoneEntry.tsx and IDScan.tsx NEW_CUSTOMER_PHONE. */}
+        <div className="bg-black/40 border-2 border-zinc-800 rounded-2xl p-5 mb-4 text-3xl font-mono text-gold tracking-wider text-center h-20 flex items-center justify-center">
+          {formatPhoneDisplay(phone) || <span className="text-zinc-700">(555) 555-5555</span>}
+        </div>
+        <p className="text-zinc-500 text-sm mb-6">
+          We'll use this to look you up on future visits
+        </p>
+
+        <div className="grid grid-cols-3 gap-3 max-w-xs mx-auto mb-6">
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9, null, 0, '←'].map((key, i) => (
+            key === null ? <div key={i} /> : (
+              <button
+                key={i}
+                onClick={() => {
+                  if (key === '←') setPhone(prev => prev.slice(0, -1));
+                  else if (phone.length < 10) setPhone(prev => prev + key.toString());
+                }}
+                className={`h-16 text-2xl font-craft flex items-center justify-center rounded-xl transition-all active:scale-95 ${
+                  key === '←' ? 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600' : 'bg-zinc-800 text-white hover:bg-zinc-700'
+                }`}
+              >
+                {key}
+              </button>
+            )
+          ))}
         </div>
 
         <div className="flex gap-4 mb-4">
@@ -608,6 +700,17 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
     );
   }
 
+  // Step 4b: Consent + signature (loyalty enrollment)
+  if (step === 'CONSENT' && phone.length === 10 && email) {
+    return (
+      <ConsentStep
+        firstName={name}
+        onBack={() => { setStep('EMAIL_ENTRY'); setError(null); }}
+        onAgree={(sig) => consentAgree(sig)}
+      />
+    );
+  }
+
   // Step 5: Creating customer
   if (step === 'CREATING') {
     return (
@@ -617,6 +720,43 @@ const GuestEntry: React.FC<GuestEntryProps> = ({ onComplete }) => {
           Signing You Up...
         </h2>
         <p className="text-zinc-400">Creating your loyalty account!</p>
+      </div>
+    );
+  }
+
+  // Under-21 with no loyalty account — cannot check in here
+  if (step === 'UNDERAGE') {
+    return (
+      <div className="w-full max-w-xl bg-zinc-900/50 p-10 rounded-3xl border border-red-700 shadow-xl text-center">
+        <div className="flex justify-center mb-6">
+          <svg className="w-24 h-24 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+        </div>
+        <h2 className="text-3xl font-craft font-bold mb-4 text-red-500 uppercase tracking-wider">
+          Must Be 21+
+        </h2>
+        <p className="text-red-300 text-lg mb-2">
+          You must be 21 or older to check in.
+        </p>
+        <p className="text-zinc-400 text-sm mb-8">
+          Medical patients: please see a staff member for assistance.
+        </p>
+        <button
+          onClick={() => {
+            setStep('NAME');
+            setName('');
+            setInitial('');
+            setPhone('');
+            setEmail('');
+            setDlData(null);
+            setExistingCustomerId(null);
+            setError(null);
+          }}
+          className="p-4 px-10 rounded-xl text-lg font-craft bg-zinc-800 text-white hover:bg-zinc-700 transition-all"
+        >
+          Done
+        </button>
       </div>
     );
   }

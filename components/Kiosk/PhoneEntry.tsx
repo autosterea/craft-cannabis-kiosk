@@ -1,16 +1,18 @@
 
 import React, { useState, useEffect } from 'react';
 import { Customer } from '../../types';
-import { lookupCustomer, updateCustomer, KioskCustomer, getBlockedWords, isNameBlocked } from '../../services/kioskApi';
+import { lookupCustomer, updateCustomer, KioskCustomer, getBlockedWords, isNameBlocked, saveLoyaltyConsent } from '../../services/kioskApi';
 import TouchKeyboard from './TouchKeyboard';
+import ConsentStep from './ConsentStep';
 
 interface PhoneEntryProps {
   onComplete: (data: Partial<Customer>) => void;
+  onTryIdScan?: (phone: string) => void;
 }
 
-type Step = 'PHONE' | 'SEARCHING' | 'FOUND' | 'LOYALTY_PROMPT' | 'EMAIL_ENTRY' | 'UPDATING_LOYALTY' | 'NAME';
+type Step = 'PHONE' | 'SEARCHING' | 'FOUND' | 'LOYALTY_PROMPT' | 'EMAIL_ENTRY' | 'CONSENT' | 'UPDATING_LOYALTY' | 'NAME';
 
-const PhoneEntry: React.FC<PhoneEntryProps> = ({ onComplete }) => {
+const PhoneEntry: React.FC<PhoneEntryProps> = ({ onComplete, onTryIdScan }) => {
   const [phone, setPhone] = useState('');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -119,19 +121,29 @@ const PhoneEntry: React.FC<PhoneEntryProps> = ({ onComplete }) => {
     setStep('EMAIL_ENTRY');
   };
 
-  // Submit email and complete loyalty signup
-  const submitEmailAndSignup = async () => {
+  // Submit email — proceed to consent + signature before enrolling
+  const submitEmailAndSignup = () => {
+    if (!foundCustomer || !email) return;
+    setStep('CONSENT');
+  };
+
+  // Customer signs consent — enroll loyalty + terms_agreed in POSaBIT, store signature
+  const consentAgree = async (signaturePng: string) => {
     if (!foundCustomer || !email) return;
 
     setStep('UPDATING_LOYALTY');
 
     try {
-      // Update customer in POSaBIT with email and loyalty
+      // Update customer in POSaBIT with email, loyalty, and consent flag
       await updateCustomer(foundCustomer.id, {
         loyaltyMember: true,
         marketingOptIn: true,
+        termsAgreed: true,
         email: email,
       });
+
+      // Persist the signature as compliance proof (fire-and-forget)
+      saveLoyaltyConsent({ customerId: foundCustomer.id, customerName: `${foundCustomer.first_name} ${foundCustomer.last_name || ''}`.trim(), signaturePng }).catch(() => {});
 
       // Update local state with new loyalty status
       setFoundCustomer({ ...foundCustomer, loyalty_member: true });
@@ -190,6 +202,17 @@ const PhoneEntry: React.FC<PhoneEntryProps> = ({ onComplete }) => {
     );
   }
 
+  // Consent + signature for loyalty enrollment
+  if (step === 'CONSENT' && foundCustomer) {
+    return (
+      <ConsentStep
+        firstName={foundCustomer.first_name}
+        onBack={() => setStep('EMAIL_ENTRY')}
+        onAgree={(sig) => consentAgree(sig)}
+      />
+    );
+  }
+
   // Email entry for loyalty signup
   if (step === 'EMAIL_ENTRY' && foundCustomer) {
     return (
@@ -244,6 +267,19 @@ const PhoneEntry: React.FC<PhoneEntryProps> = ({ onComplete }) => {
         <h2 className="text-3xl font-craft font-bold mb-4 text-gold uppercase tracking-wider">Almost There!</h2>
         <p className="text-zinc-400 mb-2">We didn't find your phone number in our system.</p>
         <p className="text-zinc-500 text-sm mb-6">Phone: {formatPhone(phone)}</p>
+
+        {onTryIdScan && (
+          <div className="mb-6 p-5 rounded-2xl bg-zinc-800/60 border border-gold/40">
+            <p className="text-white text-lg mb-3">Have you scanned your ID with us before?</p>
+            <button
+              onClick={() => onTryIdScan(phone)}
+              className="w-full p-4 rounded-xl text-lg font-craft font-bold bg-gold text-black hover:bg-[#d8c19d] transition-all"
+            >
+              Scan My ID Instead
+            </button>
+            <p className="text-zinc-500 text-xs mt-3">Or enter your name below to join as a new guest.</p>
+          </div>
+        )}
 
         {nameBlocked && (
           <div className="mb-4 p-3 bg-red-900/50 border border-red-700 rounded-xl text-red-300 text-sm">

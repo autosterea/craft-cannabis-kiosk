@@ -152,8 +152,13 @@ export class PosabitService {
     telephone?: string;
     customerId?: number;
     source?: 'walk_in' | 'order_ahead';
+    pickup?: boolean;
+    incomingOrderId?: number;
   }): Promise<PosabitQueueItem> {
-    const body = {
+    // v2.1.7+ — Online orders also send pickup:true and incoming_order_id so POSaBIT's
+    // till screen renders the "online" checkmark and links the queue row to the actual order.
+    // source='order_ahead' alone wasn't enough — the till reads pickup separately.
+    const body: any = {
       customer_queue: {
         source: data.source || 'walk_in',
         name: data.name,
@@ -161,6 +166,8 @@ export class PosabitService {
         customer_id: data.customerId,
       },
     };
+    if (data.pickup) body.customer_queue.pickup = true;
+    if (data.incomingOrderId) body.customer_queue.incoming_order_id = data.incomingOrderId;
 
     const response = await fetch(`${BASE_URL}/venue/customer_queues`, {
       method: 'POST',
@@ -251,6 +258,7 @@ export class PosabitService {
     dateOfBirth?: string;
     gender?: 'M' | 'F' | 'X';
     driversLicense?: string;
+    termsAgreed?: boolean;
   }): Promise<PosabitCustomer> {
     const customerData: any = {
       first_name: data.firstName,
@@ -262,6 +270,8 @@ export class PosabitService {
 
     // Add optional fields if provided
     if (data.email) customerData.email = data.email;
+    // Loyalty/marketing consent acknowledged on the kiosk (POSaBIT consent flag; drawn signature stored on our side)
+    if (data.termsAgreed) customerData.terms_agreed = 1;
     if (data.address1) customerData.address_1 = data.address1;
     if (data.city) customerData.city = data.city;
     if (data.state) customerData.state = data.state;
@@ -489,11 +499,15 @@ export class PosabitService {
     dateOfBirth?: string;
     gender?: 'M' | 'F' | 'X';
     driversLicense?: string;
+    termsAgreed?: boolean;
   }): Promise<PosabitCustomer> {
     const customerUpdate: any = {};
 
     if (data.loyaltyMember !== undefined) {
       customerUpdate.loyalty_member = data.loyaltyMember;
+    }
+    if (data.termsAgreed) {
+      customerUpdate.terms_agreed = 1;
     }
     if (data.marketingOptIn !== undefined) {
       customerUpdate.marketing_opt_in = data.marketingOptIn;

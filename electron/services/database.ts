@@ -38,6 +38,17 @@ export interface FailedScan {
   created_at: string;
 }
 
+// Loyalty consent + signature capture (v2.1.9). Compliance proof — never auto-deleted.
+export interface LoyaltyConsent {
+  id: number;
+  customer_id: number | null;
+  customer_name: string;
+  venue_id: string;
+  terms_version: string;
+  signature_png: string;
+  signed_at: string;
+}
+
 // Get database path in user's AppData
 function getDbPath(): string {
   const userDataPath = app.getPath('userData');
@@ -129,6 +140,21 @@ export function initDatabase(): void {
     console.error('failed_scans cleanup error:', e.message);
   }
 
+  // Loyalty consent + signature capture (v2.1.9). Compliance proof — intentionally NOT auto-pruned.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS loyalty_consents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER,
+      customer_name TEXT,
+      venue_id TEXT NOT NULL,
+      terms_version TEXT NOT NULL,
+      signature_png TEXT NOT NULL,
+      signed_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_loyalty_consents_signed ON loyalty_consents(signed_at);
+  `);
+
   console.log('Database initialized successfully');
 }
 
@@ -151,6 +177,38 @@ export function getRecentFailedScans(limit: number = 50): FailedScan[] {
     ORDER BY created_at DESC
     LIMIT ?
   `).all(limit) as FailedScan[];
+}
+
+// Loyalty consent helpers (v2.1.9)
+export function saveLoyaltyConsent(data: {
+  customerId: number | null;
+  customerName: string;
+  venueId: string;
+  termsVersion: string;
+  signaturePng: string;
+}): void {
+  if (!db) throw new Error('Database not initialized');
+  db.prepare(`
+    INSERT INTO loyalty_consents (customer_id, customer_name, venue_id, terms_version, signature_png, signed_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(
+    data.customerId ?? null,
+    data.customerName || '',
+    data.venueId,
+    data.termsVersion,
+    data.signaturePng,
+    new Date().toISOString()
+  );
+}
+
+export function getRecentLoyaltyConsents(limit: number = 50): LoyaltyConsent[] {
+  if (!db) throw new Error('Database not initialized');
+  return db.prepare(`
+    SELECT id, customer_id, customer_name, venue_id, terms_version, signature_png, signed_at
+    FROM loyalty_consents
+    ORDER BY signed_at DESC
+    LIMIT ?
+  `).all(limit) as LoyaltyConsent[];
 }
 
 // Normalize phone number (strip non-digits, take last 10)

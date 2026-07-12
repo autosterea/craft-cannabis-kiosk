@@ -15,6 +15,7 @@ import {
   getBlockedWords,
   isNameBlocked,
   checkForOnlineOrder,
+  getKioskActive,
   Venue,
   QueueItem
 } from './services/kioskApi';
@@ -73,6 +74,17 @@ const App: React.FC = () => {
 
   // Blocked words
   const [blockedWords, setBlockedWordsState] = useState<string[]>([]);
+
+  // v2.1.8+ — per-venue master switch. When false, render full-screen "not currently in use" banner.
+  const [kioskActive, setKioskActiveLocal] = useState(true);
+
+  // Load + subscribe to kiosk active state
+  useEffect(() => {
+    if (!isElectron()) return;
+    getKioskActive().then(setKioskActiveLocal).catch(() => {});
+    const off = window.kiosk.onKioskActiveChanged?.(setKioskActiveLocal);
+    return off;
+  }, []);
 
   // Load blocked words on startup
   useEffect(() => {
@@ -197,7 +209,7 @@ const App: React.FC = () => {
     if (checkName && isNameBlocked(checkName, blockedWords)) {
       setError('Please use your real name to check in.');
       setTimeout(() => setError(null), 3000);
-      return;
+      return false;
     }
 
     setLoading(true);
@@ -213,6 +225,11 @@ const App: React.FC = () => {
       // system from customer_queues — placing the queue entry is what makes them visible on the TV.
       const onlineOrder = await checkForOnlineOrder(fullName, customerData.customerId);
       const checkInSource: 'walk_in' | 'order_ahead' = onlineOrder ? 'order_ahead' : 'walk_in';
+      // v2.1.7+ — for online orders, also set pickup=true and pass the incoming_order_id so POSaBIT's
+      // till screen renders the "online" checkmark and links the queue row to the actual order record.
+      const incomingOrderId = onlineOrder && typeof onlineOrder.id === 'number'
+        ? onlineOrder.id
+        : undefined;
 
       // Add to queue (POSaBIT always gets the real name; incognito only affects the queue TV display).
       const result = await addToQueue({
@@ -223,7 +240,20 @@ const App: React.FC = () => {
         incognito: customerData.incognito,
         displayNumber: customerData.displayNumber,
         source: checkInSource,
+        pickup: !!onlineOrder,
+        incomingOrderId,
       });
+
+      // v2.1.13 — a check-in only counts if POSaBIT actually queued them. The add-to-queue handler
+      // returns { offline: true } when POSaBIT errored / was unreachable (stored locally only, which
+      // the register can't see). Never show "checked in" in that case — route them to a budtender,
+      // so no one walks away thinking they're in line when they aren't (Sarah's Andresen report).
+      if (!result || result.offline) {
+        setError("We couldn't check you in. Please see a budtender for help.");
+        setTimeout(() => setError(null), 8000);
+        setLoading(false);
+        return false;
+      }
 
       if (onlineOrder) {
         // Show the online-order confirmation regardless of whether POSaBIT 422'd "already in queue"
@@ -240,14 +270,9 @@ const App: React.FC = () => {
           incognito: customerData.incognito,
           displayNumber: customerData.displayNumber,
         });
-        setTimeout(() => setLastCheckIn(null), 5000);
+        setTimeout(() => setLastCheckIn(null), 4000);
         setLoading(false);
-        return;
-      }
-
-      // Handle offline mode
-      if (result.offline) {
-        console.log('Check-in stored offline, will sync later');
+        return true;
       }
 
       const newCustomer: Customer = {
@@ -267,11 +292,13 @@ const App: React.FC = () => {
       if (view === 'TV') {
         await fetchQueue();
       }
-      setTimeout(() => setLastCheckIn(null), 6000);
+      setTimeout(() => setLastCheckIn(null), 4000);
+      return true;
     } catch (err) {
       console.error('Failed to check in:', err);
       setError('Check-in failed. Please try again.');
       setTimeout(() => setError(null), 3000);
+      return false;
     } finally {
       setLoading(false);
     }
@@ -380,7 +407,25 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {view === 'KIOSK' ? (
+      {/* v2.1.8+ — when the location's master switch is OFF, render the "not currently in use" banner
+          in place of the main UI. Admin button (top-right corner) stays accessible so staff can flip
+          it back on via PIN 420 → Admin Panel → Kiosk System Active. */}
+      {!kioskActive ? (
+        <div className="flex-1 flex flex-col items-center justify-center bg-[#1a1a1a] text-white px-8">
+          <div className="text-center max-w-3xl">
+            <div className="text-8xl mb-8">🌿</div>
+            <h1 className="text-5xl md:text-7xl font-craft font-black uppercase tracking-tight text-gold mb-4 italic">
+              Kiosk System
+            </h1>
+            <h1 className="text-5xl md:text-7xl font-craft font-black uppercase tracking-tight text-gold mb-10 italic">
+              Not Currently In Use
+            </h1>
+            <p className="text-xl md:text-2xl font-bold uppercase tracking-[0.2em] text-zinc-400">
+              Please see a budtender
+            </p>
+          </div>
+        </div>
+      ) : view === 'KIOSK' ? (
         <KioskHome onCheckIn={handleCheckIn} lastCheckIn={lastCheckIn} />
       ) : (
         <QueueDisplay queue={queue} />

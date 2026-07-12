@@ -13,8 +13,12 @@ import {
   setShowHomeInfoPanel,
   getIncogweedoEnabled,
   setIncogweedoEnabled,
+  getKioskActive,
+  setKioskActive,
   getFailedScans,
   FailedScan,
+  getLoyaltyConsents,
+  LoyaltyConsent,
   getBlockedWords,
   setBlockedWords,
   getAppVersion,
@@ -77,10 +81,17 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
 
   // Incogweedo Mode (off by default; per-store opt in)
   const [incogweedoEnabled, setIncogweedoEnabledState] = useState(false);
+  // v2.1.8+ — per-venue master switch. When OFF, kiosk + CFQ show "not currently in use" banner.
+  const [kioskActive, setKioskActiveState] = useState(true);
+  const [kioskActiveSaving, setKioskActiveSaving] = useState(false);
 
   // Failed-scan capture (v2.1.4+)
   const [failedScans, setFailedScans] = useState<FailedScan[]>([]);
   const [loadingFailedScans, setLoadingFailedScans] = useState(false);
+
+  // Loyalty consent + signature capture (v2.1.9)
+  const [loyaltyConsents, setLoyaltyConsents] = useState<LoyaltyConsent[]>([]);
+  const [loadingConsents, setLoadingConsents] = useState(false);
 
   // App version
   const [appVersion, setAppVersion] = useState<string>('');
@@ -176,8 +187,12 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
         setShowHomeInfoPanelState(infoPanel);
         const incogweedo = await getIncogweedoEnabled();
         setIncogweedoEnabledState(incogweedo);
+        const active = await getKioskActive();
+        setKioskActiveState(active);
         const fs = await getFailedScans(50);
         setFailedScans(fs);
+        const consents = await getLoyaltyConsents(50);
+        setLoyaltyConsents(consents);
         const words = await getBlockedWords();
         setBlockedWordsState(words);
         const version = await getAppVersion();
@@ -240,6 +255,22 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
     setIncogweedoEnabledState(newValue);
   };
 
+  const handleKioskActiveToggle = async () => {
+    if (!isElectron() || kioskActiveSaving) return;
+    setKioskActiveSaving(true);
+    const newValue = !kioskActive;
+    // Optimistic UI — set local state immediately, then sync to queue web app.
+    setKioskActiveState(newValue);
+    try {
+      const result = await setKioskActive(newValue);
+      if (!result.success) {
+        console.warn('[kiosk-active] remote sync failed — local state still applied');
+      }
+    } finally {
+      setKioskActiveSaving(false);
+    }
+  };
+
   const loadFailedScans = async () => {
     if (!isElectron()) return;
     setLoadingFailedScans(true);
@@ -266,6 +297,56 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
     const a = document.createElement('a');
     a.href = url;
     a.download = `failed-scans-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const loadLoyaltyConsents = async () => {
+    if (!isElectron()) return;
+    setLoadingConsents(true);
+    try {
+      const rows = await getLoyaltyConsents(50);
+      setLoyaltyConsents(rows);
+    } catch (err) {
+      console.error('Failed to load loyalty consents:', err);
+    } finally {
+      setLoadingConsents(false);
+    }
+  };
+
+  // Export consents as a printable HTML file with embedded signature images (compliance proof)
+  const exportLoyaltyConsentsHtml = () => {
+    if (loyaltyConsents.length === 0) return;
+    const esc = (s: string) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const cards = loyaltyConsents.map(c => {
+      // Only embed well-formed PNG data URLs (defense-in-depth against malformed src).
+      const sig = (c.signature_png || '').startsWith('data:image/png;base64,') ? c.signature_png : '';
+      return `
+      <div class="card">
+        <div class="meta">
+          <strong>${esc(c.customer_name) || '(no name)'}</strong>
+          <span>Customer ID: ${c.customer_id ?? '—'}</span>
+          <span>Venue: ${esc(c.venue_id)}</span>
+          <span>Signed: ${new Date(c.signed_at).toLocaleString()}</span>
+          <span>Terms: ${esc(c.terms_version)}</span>
+        </div>
+        <img src="${sig}" alt="signature" />
+      </div>`;
+    }).join('');
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Loyalty Consents</title>
+      <style>
+        body{font-family:Arial,Helvetica,sans-serif;margin:24px;color:#111}
+        h1{font-size:20px}
+        .card{border:1px solid #ccc;border-radius:8px;padding:16px;margin-bottom:16px;page-break-inside:avoid}
+        .meta{display:flex;flex-direction:column;gap:2px;font-size:13px;margin-bottom:8px}
+        img{border:1px solid #eee;max-width:480px;height:auto;background:#fff}
+      </style></head>
+      <body><h1>Craft Cannabis — Loyalty Consents (${loyaltyConsents.length})</h1>${cards}</body></html>`;
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `loyalty-consents-${new Date().toISOString().slice(0, 10)}.html`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -510,6 +591,24 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
                 {incogweedoEnabled ? 'ON' : 'OFF'}
               </button>
             </div>
+
+            <div className="flex items-center justify-between mt-6 pt-6 border-t border-zinc-800">
+              <div>
+                <p className="text-white font-bold">Kiosk System Active</p>
+                <p className="text-zinc-400 text-sm">Master switch for this entire location. When OFF, all kiosks at this venue + the Customer Facing Queue show a "Kiosk system not currently in use" banner. Use during closures or maintenance.</p>
+              </div>
+              <button
+                onClick={handleKioskActiveToggle}
+                disabled={kioskActiveSaving}
+                className={`px-6 py-3 rounded-lg font-craft font-bold transition-all ${
+                  kioskActive
+                    ? 'bg-green-600 text-white hover:bg-green-700'
+                    : 'bg-red-700 text-white hover:bg-red-800'
+                } ${kioskActiveSaving ? 'opacity-60 cursor-wait' : ''}`}
+              >
+                {kioskActiveSaving ? '...' : kioskActive ? 'ACTIVE' : 'INACTIVE'}
+              </button>
+            </div>
           </div>
         )}
 
@@ -568,6 +667,73 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onClose, onVenueChange }) => {
                         <td className="p-3 text-zinc-500 font-mono text-xs break-all">
                           {scan.raw_barcode.slice(0, 120)}
                           {scan.raw_barcode.length > 120 ? '…' : ''}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Loyalty Consents (v2.1.9) — signature + T&C/marketing consent captured at the kiosk */}
+        {isElectron() && (
+          <div className="bg-zinc-900/50 p-6 rounded-2xl border border-zinc-800 mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-craft text-gold">
+                Loyalty Consents
+                <span className="text-zinc-500 text-sm font-normal ml-2">
+                  ({loyaltyConsents.length} recent {loyaltyConsents.length === 1 ? 'entry' : 'entries'})
+                </span>
+              </h2>
+              <div className="flex gap-2">
+                <button
+                  onClick={loadLoyaltyConsents}
+                  disabled={loadingConsents}
+                  className="px-4 py-2 rounded-lg bg-zinc-700 text-zinc-200 hover:bg-zinc-600 text-sm font-craft disabled:opacity-50"
+                >
+                  {loadingConsents ? 'Loading...' : 'Refresh'}
+                </button>
+                <button
+                  onClick={exportLoyaltyConsentsHtml}
+                  disabled={loyaltyConsents.length === 0}
+                  className="px-4 py-2 rounded-lg bg-gold text-black hover:bg-[#d8c19d] text-sm font-craft font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Export
+                </button>
+              </div>
+            </div>
+            <p className="text-zinc-400 text-sm mb-4">
+              Signature + T&amp;C / marketing consent captured during kiosk loyalty signup. POSaBIT doesn't accept the drawn image, so it's stored here as proof (the consent flag is still sent to POSaBIT). Last 50 shown — not auto-deleted.
+            </p>
+
+            {loyaltyConsents.length === 0 ? (
+              <p className="text-zinc-500 text-sm italic">No consents recorded yet.</p>
+            ) : (
+              <div className="max-h-96 overflow-y-auto rounded-lg border border-zinc-800">
+                <table className="w-full text-sm">
+                  <thead className="bg-zinc-900/80 sticky top-0">
+                    <tr className="text-left text-zinc-400 text-xs uppercase tracking-wider">
+                      <th className="p-3">When</th>
+                      <th className="p-3">Customer</th>
+                      <th className="p-3">Venue</th>
+                      <th className="p-3">Signature</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loyaltyConsents.map(c => (
+                      <tr key={c.id} className="border-t border-zinc-800 hover:bg-zinc-800/40">
+                        <td className="p-3 text-zinc-300 whitespace-nowrap">
+                          {new Date(c.signed_at).toLocaleString()}
+                        </td>
+                        <td className="p-3 text-zinc-300">
+                          {c.customer_name || '—'}
+                          <span className="text-zinc-500 text-xs block">ID: {c.customer_id ?? '—'}</span>
+                        </td>
+                        <td className="p-3 text-zinc-400">{c.venue_id}</td>
+                        <td className="p-3">
+                          <img src={c.signature_png} alt="signature" className="h-12 bg-white rounded border border-zinc-700" />
                         </td>
                       </tr>
                     ))}

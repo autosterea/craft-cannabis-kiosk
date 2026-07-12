@@ -5,7 +5,8 @@ import Store from 'electron-store';
 import pkg from 'electron-updater';
 const { autoUpdater } = pkg;
 import { getVenueList, getVenueById, INTEGRATOR_TOKEN, Venue } from './config/venues.js';
-import { initDatabase, getCustomerByPhone, getCustomerByName, getCustomerByLicense, upsertCustomers, addOfflineQueueEntry, getUnsyncedEntries, markEntrySynced, getTotalCustomerCount, searchCustomerByPhoneGlobal, getVenueIdsInDb, getSampleCustomers, getCustomersWithPhoneCount, logFailedScan, getRecentFailedScans } from './services/database.js';
+import { TELEMETRY_SECRET } from './config/tokens.js';
+import { initDatabase, getCustomerByPhone, getCustomerByName, getCustomerByLicense, upsertCustomers, addOfflineQueueEntry, getUnsyncedEntries, markEntrySynced, getTotalCustomerCount, searchCustomerByPhoneGlobal, getVenueIdsInDb, getSampleCustomers, getCustomersWithPhoneCount, logFailedScan, getRecentFailedScans, saveLoyaltyConsent, getRecentLoyaltyConsents } from './services/database.js';
 import { SyncService } from './services/sync.js';
 import { PosabitService } from './services/posabit.js';
 import { TelemetryService, getOrCreateKioskId } from './services/telemetry.js';
@@ -47,7 +48,7 @@ const DEFAULT_BLOCKED_WORDS: string[] = [
   // Political trolling (Sarah's additions)
   'maga', 'magatt', 'magatard', 'snowflake', 'libtard', 'ice',
   'trump', 'donaldtrump', 'biden', 'joebiden', 'scamala',
-  'brandon', 'letsgobrandon',
+  'letsgobrandon',
   // Sexual / inappropriate
   'daddy', 'sugarbaby', 'milf', 'dilf', 'boobs', 'tits', 'penis',
   'vagina', 'sexy', 'horny', 'hoe', 'thot', 'hooker', 'stripper',
@@ -100,6 +101,15 @@ const store = new Store<StoreSchema>({
 const storedWords = store.get('blockedWords') as string[];
 if (!storedWords || storedWords.length < DEFAULT_BLOCKED_WORDS.length) {
   store.set('blockedWords', DEFAULT_BLOCKED_WORDS);
+}
+
+// One-time cleanup (v2.1.11): 'brandon' was wrongly blocking the real first name "Brandon"
+// (only 'letsgobrandon' should be blocked). Strip it from any kiosk that already stored it —
+// removing it from DEFAULT alone won't clear it, since the length-based reset above won't fire
+// once the new default is one word shorter than what's stored.
+const cleanedWords = (store.get('blockedWords') as string[]) || [];
+if (cleanedWords.includes('brandon')) {
+  store.set('blockedWords', cleanedWords.filter(w => w !== 'brandon'));
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -235,7 +245,8 @@ function initializeServices(venueId: string) {
   // Resolution order: persisted electron-store → env vars (dev) → hardcoded prod defaults.
   // Kiosks installed in the field auto-configure to prod via the hardcoded fallback.
   const PROD_TELEMETRY_URL = 'https://craft.autosterea.com/api/kiosks/heartbeat';
-  const PROD_TELEMETRY_SECRET = 'c511f4d55a2aa4e3e31020c6a26e0294a46ce178c2ef9a03e37cd92cf02a2545';
+  // Secret lives in gitignored config/tokens.ts (repo is public — never hardcode it here)
+  const PROD_TELEMETRY_SECRET = TELEMETRY_SECRET;
   const endpoint = (store.get('telemetryEndpoint') as string | null) || process.env.KIOSK_TELEMETRY_URL || PROD_TELEMETRY_URL;
   const secret = (store.get('telemetrySecret') as string | null) || process.env.KIOSK_TELEMETRY_SECRET || PROD_TELEMETRY_SECRET;
   if (endpoint && secret) {
@@ -254,6 +265,21 @@ function initializeServices(venueId: string) {
         count: syncService ? syncService.customerCount : null,
       }),
       initialAllTimeCheckIns: (store.get('allTimeCheckIns') as number | undefined) ?? 0,
+      // v2.1.7+ — heartbeat response includes per-venue config; cache locally + push to renderer.
+      // onlineOrderTill drives the confirmation badge. kioskActive (v2.1.8+) hides the whole UI behind
+      // the "not currently in use" banner when the location is toggled off.
+      onResponse: (data) => {
+        if (data.onlineOrderTill && typeof data.onlineOrderTill === 'string') {
+          store.set('onlineOrderTill', data.onlineOrderTill);
+        }
+        if (typeof data.kioskActive === 'boolean') {
+          const prev = store.get('kioskActive');
+          store.set('kioskActive', data.kioskActive);
+          if (prev !== data.kioskActive && mainWindow) {
+            mainWindow.webContents.send('kiosk-active-changed', data.kioskActive);
+          }
+        }
+      },
     });
     telemetryService.start();
     console.log('[telemetry] started — heartbeat to', endpoint, 'every 5 min, kioskId', kioskId);
@@ -500,12 +526,15 @@ function setupIpcHandlers() {
     const venueId = store.get('selectedVenue') as string;
     console.log('[add-to-queue] incoming data:', JSON.stringify(data));
 
-    // Strip kiosk-only fields before they reach POSaBIT (POSaBIT only reads name/telephone/customerId/source)
+    // Strip kiosk-only fields before they reach POSaBIT (POSaBIT reads name/telephone/customerId/source/pickup/incoming_order_id).
+    // v2.1.7+: forward pickup + incomingOrderId so the till's "online" checkmark gets set on online-order check-ins.
     const posabitPayload = {
       name: data.name,
       telephone: data.phone || data.telephone,
       customerId: data.customerId,
       source: (data.source || 'walk_in') as 'walk_in' | 'order_ahead',
+      pickup: data.pickup === true,
+      incomingOrderId: typeof data.incomingOrderId === 'number' ? data.incomingOrderId : undefined,
     };
 
     if (!posabitService) {
@@ -605,6 +634,59 @@ function setupIpcHandlers() {
     return enabled;
   });
 
+  // v2.1.7+ — Per-venue online-order till number. Set by the heartbeat response; renderer reads it
+  // for the check-in confirmation text. Falls back to "5" until the first heartbeat lands.
+  ipcMain.handle('get-online-order-till', () => {
+    const value = store.get('onlineOrderTill');
+    return (typeof value === 'string' && value) ? value : '5';
+  });
+
+  // v2.1.8+ — Per-venue "kiosk active" flag. When false, App.tsx renders the "not currently in use"
+  // banner instead of KioskHome. Default true on first run, until heartbeat lands the real value.
+  ipcMain.handle('get-kiosk-active', () => {
+    const value = store.get('kioskActive');
+    return typeof value === 'boolean' ? value : true;
+  });
+
+  // Admin Panel toggle: persist locally + POST to queue web app so all kiosks at this venue + the CFQ
+  // converge on the same state. We don't wait for the POST — local toggle is instant; remote follows.
+  ipcMain.handle('set-kiosk-active', async (_event, active: boolean) => {
+    store.set('kioskActive', active);
+    if (mainWindow) mainWindow.webContents.send('kiosk-active-changed', active);
+
+    const venueId = store.get('selectedVenue') as string | null;
+    const PROD_TELEMETRY_URL_FOR_PATCH = 'https://craft.autosterea.com/api/kiosks/active';
+    const endpoint =
+      (store.get('kioskActiveEndpoint') as string | null) ||
+      process.env.KIOSK_ACTIVE_URL ||
+      PROD_TELEMETRY_URL_FOR_PATCH;
+    const secret =
+      (store.get('telemetrySecret') as string | null) ||
+      process.env.KIOSK_TELEMETRY_SECRET ||
+      TELEMETRY_SECRET;
+
+    if (!venueId || !endpoint || !secret) {
+      console.warn('[set-kiosk-active] no venue/endpoint/secret — local only');
+      return { success: false, localOnly: true, active };
+    }
+
+    try {
+      const res = await fetch(endpoint, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'X-Kiosk-Secret': secret },
+        body: JSON.stringify({ venueId, active }),
+      });
+      if (!res.ok) {
+        console.warn(`[set-kiosk-active] remote PATCH failed: ${res.status}`);
+        return { success: false, status: res.status, active };
+      }
+      return { success: true, active };
+    } catch (e: any) {
+      console.warn(`[set-kiosk-active] remote PATCH error: ${e.message}`);
+      return { success: false, error: e.message, active };
+    }
+  });
+
   // v2.1.6+ — Look up a customer's pending incoming (online) order via Andy's new endpoint.
   ipcMain.handle('lookup-incoming-order', async (_event, customerId: number) => {
     if (!posabitService || !customerId) return null;
@@ -633,6 +715,33 @@ function setupIpcHandlers() {
       return getRecentFailedScans(limit || 50);
     } catch (e) {
       console.error('Failed to fetch failed scans:', e);
+      return [];
+    }
+  });
+
+  // Loyalty consent + signature capture (v2.1.9)
+  ipcMain.handle('save-loyalty-consent', (_event, data: { customerId: number | null; customerName: string; termsVersion: string; signaturePng: string }) => {
+    const venueId = store.get('selectedVenue') as string;
+    try {
+      saveLoyaltyConsent({
+        customerId: data?.customerId ?? null,
+        customerName: data?.customerName || '',
+        venueId: venueId || 'unknown',
+        termsVersion: data?.termsVersion || 'v1',
+        signaturePng: data?.signaturePng || '',
+      });
+      return { ok: true };
+    } catch (e) {
+      console.error('Failed to save loyalty consent:', e);
+      return { ok: false };
+    }
+  });
+
+  ipcMain.handle('get-loyalty-consents', (_event, limit?: number) => {
+    try {
+      return getRecentLoyaltyConsents(limit || 50);
+    } catch (e) {
+      console.error('Failed to fetch loyalty consents:', e);
       return [];
     }
   });

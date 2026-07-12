@@ -12,3 +12,6 @@ export const VENUE_TOKENS: Record<string, string> = {
   southWenatchee: 'YOUR_VENUE_TOKEN_HERE',
   wenatchee: 'YOUR_VENUE_TOKEN_HERE',
 };
+
+// Fleet telemetry heartbeat secret (64-char hex, must match KIOSK_TELEMETRY_SECRET on the server)
+export const TELEMETRY_SECRET = 'YOUR_TELEMETRY_SECRET_HERE';

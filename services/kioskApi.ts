@@ -142,6 +142,7 @@ export async function createCustomer(data: {
   dateOfBirth?: string;
   gender?: 'M' | 'F' | 'X';
   driversLicense?: string;
+  termsAgreed?: boolean;
 }): Promise<KioskCustomer> {
   if (isElectron()) {
     return window.kiosk.createCustomer(data);
@@ -164,6 +165,7 @@ export async function updateCustomer(customerId: number, data: {
   dateOfBirth?: string;
   gender?: 'M' | 'F' | 'X';
   driversLicense?: string;
+  termsAgreed?: boolean;
 }): Promise<KioskCustomer> {
   if (isElectron()) {
     return window.kiosk.updateCustomer(customerId, data);
@@ -191,6 +193,8 @@ export async function addToQueue(data: {
   incognito?: boolean;
   displayNumber?: string;
   source?: 'walk_in' | 'order_ahead';
+  pickup?: boolean;
+  incomingOrderId?: number;
 }): Promise<any> {
   if (isElectron()) {
     return window.kiosk.addToQueue(data);
@@ -206,6 +210,7 @@ export async function addToQueue(data: {
 // that filtered customer_queues by source=order_ahead — that source is never set by
 // Craft's online ordering system, so the old check always returned null.
 export async function checkForOnlineOrder(customerName: string, customerId?: number): Promise<{
+  id?: number;
   reference_no?: string;
   first_name?: string;
   last_name?: string;
@@ -310,6 +315,39 @@ export function generateDisplayNumber(): string {
   return String(Math.floor(Math.random() * 900) + 100);
 }
 
+// v2.1.7+ — Per-venue online-order till number, cached from heartbeat. Falls back to '5'.
+export async function getOnlineOrderTill(): Promise<string> {
+  if (isElectron()) {
+    try {
+      const value = await window.kiosk.getOnlineOrderTill();
+      return (typeof value === 'string' && value) ? value : '5';
+    } catch {
+      return '5';
+    }
+  }
+  return '5';
+}
+
+// v2.1.8+ — Per-venue kiosk active flag. When false, the kiosk + CFQ render the "not currently in use" banner.
+export async function getKioskActive(): Promise<boolean> {
+  if (isElectron()) {
+    try {
+      const value = await window.kiosk.getKioskActive();
+      return typeof value === 'boolean' ? value : true;
+    } catch {
+      return true;
+    }
+  }
+  return true;
+}
+
+export async function setKioskActive(active: boolean): Promise<{ success: boolean; active: boolean }> {
+  if (isElectron()) {
+    return window.kiosk.setKioskActive(active);
+  }
+  return { success: false, active };
+}
+
 // Failed-scan capture (v2.1.4+)
 export interface FailedScan {
   id: number;
@@ -328,6 +366,42 @@ export async function logFailedScan(rawBarcode: string, parserError: string): Pr
 export async function getFailedScans(limit: number = 50): Promise<FailedScan[]> {
   if (isElectron()) {
     return window.kiosk.getFailedScans(limit);
+  }
+  return [];
+}
+
+// Loyalty consent + signature capture (v2.1.9)
+export interface LoyaltyConsent {
+  id: number;
+  customer_id: number | null;
+  customer_name: string;
+  venue_id: string;
+  terms_version: string;
+  signature_png: string;
+  signed_at: string;
+}
+
+export const LOYALTY_TERMS_VERSION = 'v1-2026-06';
+
+export async function saveLoyaltyConsent(data: {
+  customerId: number | null;
+  customerName: string;
+  signaturePng: string;
+  termsVersion?: string;
+}): Promise<void> {
+  if (isElectron()) {
+    await window.kiosk.saveLoyaltyConsent({
+      customerId: data.customerId,
+      customerName: data.customerName,
+      termsVersion: data.termsVersion || LOYALTY_TERMS_VERSION,
+      signaturePng: data.signaturePng,
+    });
+  }
+}
+
+export async function getLoyaltyConsents(limit: number = 50): Promise<LoyaltyConsent[]> {
+  if (isElectron()) {
+    return window.kiosk.getLoyaltyConsents(limit);
   }
   return [];
 }

@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Logo, GoldButton } from '../Branding';
 import { Customer, CheckInMethod } from '../../types';
-import { getShowHomeInfoPanel, getIncogweedoEnabled, generateDisplayNumber, isElectron } from '../../services/kioskApi';
+import { getShowHomeInfoPanel, getIncogweedoEnabled, generateDisplayNumber, getOnlineOrderTill, isElectron } from '../../services/kioskApi';
 import IDScan from './IDScan';
 import PhoneEntry from './PhoneEntry';
 import GuestEntry from './GuestEntry';
@@ -10,18 +10,24 @@ import QREntry from './QREntry';
 import IncogweedoToggle from './IncogweedoToggle';
 
 interface KioskHomeProps {
-  onCheckIn: (data: Partial<Customer>) => void;
+  onCheckIn: (data: Partial<Customer>) => void | Promise<boolean>;
   lastCheckIn: Customer | null;
 }
 
 const KioskHome: React.FC<KioskHomeProps> = ({ onCheckIn, lastCheckIn }) => {
   const [activeScreen, setActiveScreen] = useState<'HOME' | CheckInMethod>('HOME');
   const [pendingScanData, setPendingScanData] = useState<string | null>(null);
+  // v2.1.13 — phone typed on the Phone screen, carried into ID Scan so the new-customer step
+  // doesn't ask for it a second time (Sarah's Andresen feedback). Cleared on consume + on HOME.
+  const [prefillPhone, setPrefillPhone] = useState('');
   const [showInfoPanel, setShowInfoPanel] = useState(true);
   const [incogweedoEnabled, setIncogweedoEnabled] = useState(false);
   const [incognitoOn, setIncognitoOn] = useState(false);
   const [displayNumber, setDisplayNumber] = useState('');
+  // Per-venue online-order till # (synced from the queue web app via heartbeat). Default "5" until loaded.
+  const [onlineOrderTill, setOnlineOrderTill] = useState('5');
   const prevLastCheckIn = useRef<Customer | null>(null);
+  const lastCheckInRef = useRef<Customer | null>(lastCheckIn);
   const homeScanRef = useRef<HTMLInputElement>(null);
   const homeScanBuffer = useRef('');
   const homeScanTimeout = useRef<NodeJS.Timeout | null>(null);
@@ -42,11 +48,18 @@ const KioskHome: React.FC<KioskHomeProps> = ({ onCheckIn, lastCheckIn }) => {
     return off;
   }, []);
 
+  // Load the per-venue online-order till # on mount, and refresh whenever the user lands back on HOME
+  // (so a heartbeat that updated the cached value mid-session is picked up before the next check-in).
+  useEffect(() => {
+    getOnlineOrderTill().then(setOnlineOrderTill).catch(() => {});
+  }, [activeScreen]);
+
   // Reset Incogweedo per-checkin state whenever we land back on HOME (fresh customer)
   useEffect(() => {
     if (activeScreen === 'HOME' && !lastCheckIn) {
       setIncognitoOn(false);
       setDisplayNumber('');
+      setPrefillPhone(''); // never let one customer's typed phone bleed into the next
     }
   }, [activeScreen, lastCheckIn]);
 
@@ -63,10 +76,9 @@ const KioskHome: React.FC<KioskHomeProps> = ({ onCheckIn, lastCheckIn }) => {
   // Wrap the parent onCheckIn so every entry-screen submission carries the incognito flag + number
   const handleCheckIn = (data: Partial<Customer>) => {
     if (incognitoOn && displayNumber) {
-      onCheckIn({ ...data, incognito: true, displayNumber });
-    } else {
-      onCheckIn(data);
+      return onCheckIn({ ...data, incognito: true, displayNumber });
     }
+    return onCheckIn(data);
   };
 
   // Auto-return to home screen after check-in confirmation clears
@@ -76,6 +88,34 @@ const KioskHome: React.FC<KioskHomeProps> = ({ onCheckIn, lastCheckIn }) => {
     }
     prevLastCheckIn.current = lastCheckIn;
   }, [lastCheckIn]);
+
+  // Keep a live ref to lastCheckIn so the idle timer below reads the LATEST value (not a stale
+  // closure). Guards the rare window between a check-in completing and lastCheckIn being set.
+  useEffect(() => { lastCheckInRef.current = lastCheckIn; }, [lastCheckIn]);
+
+  // Global idle reset (safety net): if a customer starts a check-in flow and walks away, return to
+  // HOME after 20s with no interaction. Any touch / tap / scanner keystroke resets the timer.
+  // This guarantees NO mid-check-in screen (scan, choice, link-account, consent, etc.) can stay
+  // stuck and block the next customer. HOME and the post-check-in confirmation are excluded — they
+  // manage their own timing — so this only runs while a method screen is open.
+  useEffect(() => {
+    if (activeScreen === 'HOME' || lastCheckIn) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const resetIdle = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        // Don't bounce to home if a check-in completed while this timer was pending.
+        if (!lastCheckInRef.current) setActiveScreen('HOME');
+      }, 20000);
+    };
+    resetIdle();
+    const events: (keyof WindowEventMap)[] = ['pointerdown', 'keydown', 'touchstart'];
+    events.forEach(e => window.addEventListener(e, resetIdle));
+    return () => {
+      clearTimeout(timer);
+      events.forEach(e => window.removeEventListener(e, resetIdle));
+    };
+  }, [activeScreen, lastCheckIn]);
 
   // Keep home screen scanner input focused when on HOME screen
   useEffect(() => {
@@ -111,15 +151,19 @@ const KioskHome: React.FC<KioskHomeProps> = ({ onCheckIn, lastCheckIn }) => {
 
     // Wait for scanner to finish typing (100ms debounce)
     homeScanTimeout.current = setTimeout(() => {
-      if (value.length > 100) {
-        // Looks like a DL barcode — switch to ID scan with this data
-        setPendingScanData(value);
+      const scanned = value.trim();
+      // v2.1.15 HOTFIX: the home scanner only accepts real driver's license barcodes (200+ chars).
+      // v2.1.14 also accepted any short numeric string here as a Dope customer id, which meant a
+      // stray number typed/scanned on the home screen silently checked in whoever owned that id
+      // (the wrong-account check-ins reported 07/11). Dope QR now lives ONLY on the dedicated
+      // QR Code Entry screen (QREntry.tsx) where the customer explicitly opts in.
+      if (scanned.length > 100) {
+        setPendingScanData(scanned);
         setActiveScreen('ID_SCAN');
-        // Clear the buffer
         homeScanBuffer.current = '';
         if (homeScanRef.current) homeScanRef.current.value = '';
       } else {
-        // Too short — not a DL barcode, clear it
+        // Not a recognized barcode — clear it
         homeScanBuffer.current = '';
         if (homeScanRef.current) homeScanRef.current.value = '';
       }
@@ -143,7 +187,7 @@ const KioskHome: React.FC<KioskHomeProps> = ({ onCheckIn, lastCheckIn }) => {
               Welcome, <span className="font-bold text-white">{lastCheckIn.name}</span>.
             </p>
             <p className="text-xl text-gold font-bold mb-4">Your online order is ready.</p>
-            <p className="text-lg text-zinc-400">Please head to <span className="font-bold text-white">Till 5</span> — a budtender will assist you shortly.</p>
+            <p className="text-lg text-zinc-400">Please head to <span className="font-bold text-white">Till {onlineOrderTill}</span> — a budtender will assist you shortly.</p>
           </div>
         </div>
       );
@@ -159,14 +203,16 @@ const KioskHome: React.FC<KioskHomeProps> = ({ onCheckIn, lastCheckIn }) => {
               <p className="text-2xl text-zinc-300 mb-2">
                 You're <span className="font-bold text-gold text-3xl">#{lastCheckIn.displayNumber}</span>
               </p>
-              <p className="text-lg text-zinc-400">Look for that on the screen — it'll come up in a moment.</p>
+              <p className="text-xl text-white mb-2">Feel free to browse — we'll call your number when it's your turn.</p>
+              <p className="text-sm text-zinc-400">Look for that on the screen — it'll come up in a moment.</p>
             </>
           ) : (
             <>
               <p className="text-2xl text-zinc-300 mb-4">
                 Thank you, <span className="font-bold text-white">{lastCheckIn.name}</span>!
               </p>
-              <p className="text-lg text-zinc-400">Your name will appear on the screen in a moment.</p>
+              <p className="text-xl text-white mb-2">Feel free to browse — we'll call your name when it's your turn.</p>
+              <p className="text-sm text-zinc-400">Your name will appear on the screen in a moment.</p>
             </>
           )}
         </div>
@@ -275,8 +321,8 @@ const KioskHome: React.FC<KioskHomeProps> = ({ onCheckIn, lastCheckIn }) => {
             )}
 
             <div className="flex-1 flex items-center justify-center">
-              {activeScreen === 'ID_SCAN' && <IDScan onComplete={handleCheckIn} onGoHome={() => setActiveScreen('HOME')} pendingScanData={pendingScanData} onPendingScanConsumed={clearPendingScan} />}
-              {activeScreen === 'PHONE' && <PhoneEntry onComplete={handleCheckIn} />}
+              {activeScreen === 'ID_SCAN' && <IDScan onComplete={handleCheckIn} onGoHome={() => setActiveScreen('HOME')} pendingScanData={pendingScanData} onPendingScanConsumed={clearPendingScan} prefillPhone={prefillPhone} onPrefillPhoneConsumed={() => setPrefillPhone('')} />}
+              {activeScreen === 'PHONE' && <PhoneEntry onComplete={handleCheckIn} onTryIdScan={(phone) => { setPrefillPhone(phone); setActiveScreen('ID_SCAN'); }} />}
               {activeScreen === 'GUEST' && <GuestEntry onComplete={handleCheckIn} />}
               {activeScreen === 'QR' && <QREntry onComplete={handleCheckIn} />}
             </div>

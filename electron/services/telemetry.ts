@@ -42,6 +42,8 @@ export class TelemetryService {
   private timer: NodeJS.Timeout | null = null;
   private getVenueId: () => string | null;
   private getLastSync: () => { at: string | null; count: number | null };
+  // Optional callback so main.ts can persist per-venue config (onlineOrderTill, kioskActive) returned by the heartbeat.
+  private onResponse?: (data: { onlineOrderTill?: string; kioskActive?: boolean }) => void;
 
   // Cumulative (all-time) check-ins handled in-memory; daily counters reset at midnight.
   public checkIns = new CounterStore();
@@ -56,6 +58,7 @@ export class TelemetryService {
     getVenueId: () => string | null;
     getLastSync: () => { at: string | null; count: number | null };
     initialAllTimeCheckIns?: number;
+    onResponse?: (data: { onlineOrderTill?: string; kioskActive?: boolean }) => void;
   }) {
     this.kioskId = opts.kioskId;
     this.endpoint = opts.endpoint;
@@ -64,6 +67,7 @@ export class TelemetryService {
     this.getVenueId = opts.getVenueId;
     this.getLastSync = opts.getLastSync;
     this.allTimeCheckIns = opts.initialAllTimeCheckIns ?? 0;
+    this.onResponse = opts.onResponse;
   }
 
   start(): void {
@@ -119,6 +123,16 @@ export class TelemetryService {
       });
       if (!res.ok) {
         console.warn(`[telemetry] heartbeat failed: ${res.status}`);
+        return;
+      }
+      // Capture any per-venue config the server ships back (onlineOrderTill, kioskActive).
+      if (this.onResponse) {
+        try {
+          const data = await res.json() as { onlineOrderTill?: string; kioskActive?: boolean };
+          this.onResponse(data);
+        } catch {
+          // Response wasn't JSON — ignore, heartbeat itself succeeded.
+        }
       }
     } catch (e: any) {
       console.warn(`[telemetry] heartbeat error: ${e.message}`);

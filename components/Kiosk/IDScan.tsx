@@ -1,14 +1,23 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Customer } from '../../types';
-import { lookupCustomerByName, lookupCustomerByLicense, lookupCustomerByDobLastname, lookupCustomer, fetchCustomerById, updateCustomer, createCustomer, getQueue, logFailedScan, KioskCustomer } from '../../services/kioskApi';
+import { lookupCustomerByName, lookupCustomerByLicense, lookupCustomerByDobLastname, lookupCustomer, fetchCustomerById, updateCustomer, createCustomer, getQueue, logFailedScan, saveLoyaltyConsent, KioskCustomer } from '../../services/kioskApi';
+import ConsentStep from './ConsentStep';
 import TouchKeyboard from './TouchKeyboard';
 
+// v2.1.13 — resolve to `fallback` if a POSaBIT call hangs (stalled network), so a stuck call can never
+// trap a customer on a dead screen. A hang is treated as a failure → the caller routes to a budtender.
+function withTimeout<T>(p: any, ms: number, fallback: T): Promise<T> {
+  return Promise.race([Promise.resolve(p), new Promise<T>(res => setTimeout(() => res(fallback), ms))]) as Promise<T>;
+}
+
 interface IDScanProps {
-  onComplete: (data: Partial<Customer>) => void;
+  onComplete: (data: Partial<Customer>) => void | Promise<boolean>;
   onGoHome?: () => void;
   pendingScanData?: string | null;
   onPendingScanConsumed?: () => void;
+  prefillPhone?: string;
+  onPrefillPhoneConsumed?: () => void;
 }
 
 interface ParsedLicense {
@@ -241,8 +250,8 @@ const parseDriversLicense = (scanData: string): ParsedLicense | null => {
   }
 };
 
-const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, onPendingScanConsumed }) => {
-  const [status, setStatus] = useState<'READY' | 'SCANNING' | 'FOUND' | 'LOYALTY_PROMPT' | 'EMAIL_ENTRY' | 'UPDATING_LOYALTY' | 'SUCCESS' | 'UNDERAGE' | 'INVALID_SCAN' | 'NEW_CUSTOMER_PHONE' | 'NEW_CUSTOMER_LOYALTY_PROMPT' | 'NEW_CUSTOMER_EMAIL' | 'LINK_ACCOUNT_PHONE' | 'LINK_ACCOUNT_SEARCHING' | 'LINK_ACCOUNT_VERIFYING' | 'LINK_ACCOUNT_FOUND' | 'LINK_ACCOUNT_NOT_FOUND' | 'LINK_ACCOUNT_MISMATCH' | 'AUTO_CHECKIN' | 'ALREADY_IN_QUEUE'>('READY');
+const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, onPendingScanConsumed, prefillPhone, onPrefillPhoneConsumed }) => {
+  const [status, setStatus] = useState<'READY' | 'SCANNING' | 'FOUND' | 'LOYALTY_PROMPT' | 'EMAIL_ENTRY' | 'UPDATING_LOYALTY' | 'SUCCESS' | 'UNDERAGE' | 'INVALID_SCAN' | 'NEW_CUSTOMER_PHONE' | 'NEW_CUSTOMER_LOYALTY_PROMPT' | 'NEW_CUSTOMER_EMAIL' | 'CONSENT' | 'LINK_ACCOUNT_PHONE' | 'LINK_ACCOUNT_SEARCHING' | 'LINK_ACCOUNT_VERIFYING' | 'LINK_ACCOUNT_FOUND' | 'LINK_ACCOUNT_NOT_FOUND' | 'LINK_ACCOUNT_MISMATCH' | 'AUTO_CHECKIN' | 'ALREADY_IN_QUEUE' | 'CHECKIN_FAILED'>('READY');
   const [scanBuffer, setScanBuffer] = useState('');
   const [scannedInfo, setScannedInfo] = useState<ParsedLicense | null>(null);
   const [foundCustomer, setFoundCustomer] = useState<KioskCustomer | null>(null);
@@ -254,6 +263,10 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
   const [pinError, setPinError] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const bufferTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // v2.1.13 — phone the customer typed on the Phone screen (carried over so we don't re-ask).
+  const seededPhoneRef = useRef('');
+  // v2.1.13 — guard the new-customer "just check in" against a double-tap during the create+queue await.
+  const submittingRef = useRef(false);
 
   // Keep input focused for scanner
   useEffect(() => {
@@ -275,6 +288,18 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
       processScan(pendingScanData);
     }
   }, [pendingScanData]);
+
+  // v2.1.13 — seed the new-customer phone from what the customer typed on the Phone screen, so the
+  // "what's your phone?" step isn't a redundant second entry (Sarah's Andresen feedback). Remember it
+  // in a ref too, so the post-scan not-found reset restores it instead of blanking it.
+  useEffect(() => {
+    if (prefillPhone) {
+      seededPhoneRef.current = prefillPhone;
+      setNewCustomerPhone(prefillPhone);
+      onPrefillPhoneConsumed?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefillPhone]);
 
   const handleScanInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     // Only accept input in READY state to prevent duplicate scans
@@ -301,10 +326,17 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
   };
 
   const processScan = async (scanData: string) => {
+    // v2.1.13 — capture any phone carried over from the Phone screen BEFORE resetScan() clears the ref,
+    // so the not-found step can pre-fill it for THIS scan, while an abandoned scan can't bleed it to the next customer.
+    const carriedPhone = seededPhoneRef.current;
     // Immediately clear the input to prevent re-triggering
     resetScan();
 
     setStatus('SCANNING');
+
+    // v2.1.15 HOTFIX: removed the v2.1.14 short-numeric branch that treated any 4-12 digit
+    // string as a Dope customer id and auto-checked that customer in. A stray number reaching
+    // this screen must NOT check anyone in — Dope QR is handled only by QREntry.tsx.
 
     // Validate scan data before parsing
     // Real AAMVA PDF417 barcodes are typically 200+ characters
@@ -380,8 +412,11 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
     // Store scanned info for display
     setScannedInfo(parsed);
 
-    // Check if underage
-    if (parsed.isOver21 === false) {
+    // Under-21 handling: medical patients under 21 are allowed to check in, but ONLY if they
+    // already have a loyalty account (per James, all medically-certified under-21 customers have one).
+    // We can't decide this until after the customer lookup below, so defer the UNDERAGE screen.
+    const isUnderage = parsed.isOver21 === false;
+    const blockUnderage = () => {
       setStatus('UNDERAGE');
       // Auto-reset after 5 seconds
       setTimeout(() => {
@@ -389,10 +424,9 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
         setStatus('READY');
         setScannedInfo(null);
       }, 5000);
-      return;
-    }
+    };
 
-    // Age verified - look up customer by DL number first (most reliable), then fall back to name
+    // Look up customer by DL number first (most reliable), then fall back to name
     try {
       // Strategy 1: Search by driver's license number (unique identifier)
       if (parsed.licenseNumber) {
@@ -400,6 +434,8 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
         const dlResult = await lookupCustomerByLicense(parsed.licenseNumber);
         if (dlResult.found && dlResult.customer) {
           console.log('Customer found by DL number:', dlResult.customer.first_name, dlResult.customer.last_name);
+          // Under-21 gate: allow only loyalty members (medical patients)
+          if (isUnderage && !dlResult.customer.loyalty_member) { blockUnderage(); return; }
           setFoundCustomer(dlResult.customer);
           setFoundByDL(true);
 
@@ -416,10 +452,10 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
             }, 4000);
           } else {
             setStatus('AUTO_CHECKIN');
-            // Auto check-in after 6 second confirmation display
+            // Auto check-in after 3 second confirmation display (kept short so the next customer can scan)
             setTimeout(() => {
               autoCheckIn(dlResult.customer, parsed);
-            }, 6000);
+            }, 3000);
           }
           return;
         }
@@ -434,6 +470,8 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
           const dobResult = await lookupCustomerByDobLastname(birthday, lastName);
           if (dobResult.found && dobResult.customer) {
             console.log('Customer found by DOB+lastname:', dobResult.customer.first_name, dobResult.customer.last_name);
+            // Under-21 gate: allow only loyalty members (medical patients)
+            if (isUnderage && !dobResult.customer.loyalty_member) { blockUnderage(); return; }
             setFoundCustomer(dobResult.customer);
             setFoundByDL(false);
 
@@ -451,7 +489,7 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
               setStatus('AUTO_CHECKIN');
               setTimeout(() => {
                 autoCheckIn(dobResult.customer, parsed);
-              }, 6000);
+              }, 3000);
             }
             return;
           }
@@ -463,6 +501,8 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
       setFoundByDL(false);
       const result = await lookupCustomerByName(firstName, lastName);
       if (result.found && result.customer) {
+        // Under-21 gate: allow only loyalty members (medical patients)
+        if (isUnderage && !result.customer.loyalty_member) { blockUnderage(); return; }
         setFoundCustomer(result.customer);
 
         // Check if already in queue
@@ -478,10 +518,10 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
           }, 4000);
         } else {
           setStatus('AUTO_CHECKIN');
-          // Auto check-in after brief confirmation display (6 seconds)
+          // Auto check-in after brief confirmation display (3 seconds)
           setTimeout(() => {
             autoCheckIn(result.customer, parsed);
-          }, 6000);
+          }, 3000);
         }
         return;
       }
@@ -489,10 +529,14 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
       console.error('Customer lookup failed:', error);
     }
 
+    // Under-21 with no existing account → cannot create a new account, block here.
+    // (Loyalty/medical under-21 customers would have been found and let through above.)
+    if (isUnderage) { blockUnderage(); return; }
+
     // Customer not found - capture phone first (preserves the data for createCustomer + lets us short-circuit if the phone matches an existing account)
     setFoundCustomer(null);
     setFoundByDL(false);
-    setNewCustomerPhone('');
+    setNewCustomerPhone(carriedPhone); // phone carried over from the Phone screen for THIS scan (else blank)
     setStatus('NEW_CUSTOMER_PHONE');
   };
 
@@ -511,8 +555,10 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
   };
 
   // Auto check-in for found customers (no buttons)
-  // Called immediately when AUTO_CHECKIN is set — adds to queue right away
-  const autoCheckIn = (customer: KioskCustomer, scan: ParsedLicense) => {
+  // Called after the brief AUTO_CHECKIN confirmation. v2.1.13 — only let the parent confirmation card
+  // stand if POSaBIT actually queued them; otherwise show CHECKIN_FAILED ("see a budtender"), never a
+  // fake success (Sarah's Andresen report — this is the high-volume returning-customer path).
+  const autoCheckIn = async (customer: KioskCustomer, scan: ParsedLicense) => {
     const customerData = {
       name: customer.first_name,
       lastNameInitial: customer.last_name?.[0]?.toUpperCase() || '',
@@ -541,28 +587,37 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
       });
     }
 
-    // Reset state — don't set READY (KioskHome confirmation takes over)
+    const ok = await withTimeout(onComplete(customerData), 15000, false);
+    if (ok === false) {
+      setStatus('CHECKIN_FAILED');
+      setTimeout(() => onGoHome?.(), 6000);
+      return;
+    }
+
+    // Success — KioskHome confirmation card takes over; reset our local state behind it.
     setScannedInfo(null);
     setFoundCustomer(null);
     setFoundByDL(false);
     resetScan();
-
-    onComplete(customerData);
   };
 
   // New customer declines loyalty — create with DL demographics only
   const newCustomerSkipLoyalty = async () => {
     if (!scannedInfo) return;
+    if (submittingRef.current) return; // guard double-tap during the create+queue await
+    submittingRef.current = true;
 
     const firstName = scannedInfo.firstName || 'Guest';
     const lastName = scannedInfo.lastName || '';
     const lastInitial = lastName ? lastName[0].toUpperCase() : '';
 
-    setStatus('SUCCESS');
-
+    // v2.1.13 — do NOT flash SUCCESS before the account + queue actually succeed. Sarah's Andresen
+    // report: the kiosk said "you're checked in" but she wasn't, and staff had to find her manually.
+    // Create the account first; if it (or the queue add) fails, show a clear "see a budtender" instead
+    // of a fake success + an unlinked queue entry.
     let newCustomerId: number | undefined;
     try {
-      const newCustomer = await createCustomer({
+      const newCustomer = await withTimeout<KioskCustomer | null>(createCustomer({
         firstName,
         lastName: lastName || undefined,
         telephone: newCustomerPhone,
@@ -574,23 +629,40 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
         zipCode: scannedInfo.zipCode,
         dateOfBirth: scannedInfo.dateOfBirth,
         gender: scannedInfo.gender,
-      });
+      }), 15000, null);
+      if (!newCustomer) throw new Error('createCustomer timed out');
       newCustomerId = newCustomer.id;
     } catch (error) {
       console.error('Failed to create customer from DL:', error);
+      submittingRef.current = false;
+      setStatus('CHECKIN_FAILED');
+      setTimeout(() => onGoHome?.(), 6000);
+      return;
     }
 
+    // Add to queue. onComplete returns false when POSaBIT did not actually queue them (or hangs past 15s).
+    const ok = await withTimeout(onComplete({
+      name: firstName,
+      lastNameInitial: lastInitial,
+      method: 'ID_SCAN',
+      loyaltyStatus: 'Guest',
+      customerId: newCustomerId,
+      driversLicense: scannedInfo.licenseNumber,
+      dateOfBirth: scannedInfo.dateOfBirth,
+      age: scannedInfo.age,
+    }), 15000, false);
+
+    if (ok === false) {
+      submittingRef.current = false;
+      setStatus('CHECKIN_FAILED');
+      setTimeout(() => onGoHome?.(), 6000);
+      return;
+    }
+
+    // Success — the parent confirmation card takes over; reset our local state behind it.
+    submittingRef.current = false;
+    setStatus('SUCCESS');
     setTimeout(() => {
-      onComplete({
-        name: firstName,
-        lastNameInitial: lastInitial,
-        method: 'ID_SCAN',
-        loyaltyStatus: 'Guest',
-        customerId: newCustomerId,
-        driversLicense: scannedInfo.licenseNumber,
-        dateOfBirth: scannedInfo.dateOfBirth,
-        age: scannedInfo.age,
-      });
       setScannedInfo(null);
       setFoundCustomer(null);
       setNewCustomerPhone('');
@@ -605,8 +677,14 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
     setStatus('NEW_CUSTOMER_EMAIL');
   };
 
-  // New customer submits email for loyalty — create customer with DL + email + loyalty
-  const newCustomerSubmitEmail = async () => {
+  // New customer submits email — proceed to consent + signature before creating the account
+  const newCustomerSubmitEmail = () => {
+    if (!scannedInfo || !email) return;
+    setStatus('CONSENT');
+  };
+
+  // New customer signs consent — create customer with DL + email + loyalty + terms_agreed, store signature
+  const newCustomerConsentAgree = async (signaturePng: string) => {
     if (!scannedInfo || !email) return;
 
     const firstName = scannedInfo.firstName || 'Guest';
@@ -622,6 +700,7 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
         telephone: newCustomerPhone,
         email,
         loyaltyOptIn: true,
+        termsAgreed: true,
         driversLicense: scannedInfo.licenseNumber,
         address1: scannedInfo.address,
         city: scannedInfo.city,
@@ -630,6 +709,9 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
         dateOfBirth: scannedInfo.dateOfBirth,
         gender: scannedInfo.gender,
       });
+
+      // Persist the signature as compliance proof (fire-and-forget)
+      saveLoyaltyConsent({ customerId: newCustomer.id, customerName: `${firstName} ${lastName}`.trim(), signaturePng }).catch(() => {});
 
       setScannedInfo(null);
       setFoundCustomer(null);
@@ -793,11 +875,6 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
     }
   };
 
-  // Skip phone capture — proceed to loyalty prompt without a phone number
-  const skipNewCustomerPhone = () => {
-    setNewCustomerPhone('');
-    setStatus('NEW_CUSTOMER_LOYALTY_PROMPT');
-  };
 
   // Link Account - submit phone and search
   const linkAccountSubmitPhone = async () => {
@@ -953,6 +1030,7 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
 
   const resetScan = () => {
     setScanBuffer('');
+    seededPhoneRef.current = ''; // v2.1.13 — drop any carried phone so an abandoned scan can't bleed it to the next customer
     if (inputRef.current) {
       inputRef.current.value = '';
     }
@@ -965,8 +1043,14 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
     setStatus('EMAIL_ENTRY');
   };
 
-  // Submit email and complete loyalty signup
-  const submitEmailAndSignup = async () => {
+  // Submit email — proceed to consent + signature before enrolling
+  const submitEmailAndSignup = () => {
+    if (!foundCustomer || !scannedInfo || !email) return;
+    setStatus('CONSENT');
+  };
+
+  // Existing customer signs consent — enroll loyalty + terms_agreed in POSaBIT, store signature
+  const existingConsentAgree = async (signaturePng: string) => {
     if (!foundCustomer || !scannedInfo || !email) return;
 
     // Store data before changing state
@@ -984,10 +1068,11 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
     setStatus('UPDATING_LOYALTY');
 
     try {
-      // Update customer in POSaBIT with email, loyalty, and demographics
+      // Update customer in POSaBIT with email, loyalty, consent flag, and demographics
       await updateCustomer(foundCustomer.id, {
         loyaltyMember: true,
         marketingOptIn: true,
+        termsAgreed: true,
         email: email,
         // Include demographics from DL
         driversLicense: scannedInfo.licenseNumber,
@@ -998,6 +1083,9 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
         dateOfBirth: scannedInfo.dateOfBirth,
         gender: scannedInfo.gender,
       });
+
+      // Persist the signature as compliance proof (fire-and-forget)
+      saveLoyaltyConsent({ customerId: foundCustomer.id, customerName: `${foundCustomer.first_name} ${foundCustomer.last_name || ''}`.trim(), signaturePng }).catch(() => {});
 
       // Reset state FIRST
       setScannedInfo(null);
@@ -1070,21 +1158,33 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
         </h2>
         <p className="text-2xl text-white mb-4">You're all checked in!</p>
 
-        {/* Age info */}
+        {/* Age info — only for DL scans (a Dope QR carries no DOB) */}
+        {scannedInfo.dateOfBirth && (
         <div className="mb-6 p-4 rounded-xl bg-green-900/30 border border-green-700">
           <div className="grid grid-cols-2 gap-2 text-left text-lg">
             <span className="text-zinc-400">DOB:</span>
             <span className="text-white">{formatDOB(scannedInfo.dateOfBirth || '')}</span>
-            <span className="text-zinc-400">21+:</span>
-            <span className="text-green-400 font-bold">Verified ✓</span>
+            {scannedInfo.isOver21 === true ? (
+              <>
+                <span className="text-zinc-400">21+:</span>
+                <span className="text-green-400 font-bold">Verified ✓</span>
+              </>
+            ) : scannedInfo.isOver21 === false ? (
+              <>
+                <span className="text-zinc-400">Status:</span>
+                <span className="text-gold font-bold">Loyalty Member ✓</span>
+              </>
+            ) : null}
           </div>
         </div>
+        )}
 
-        {foundCustomer.loyalty_member && (
+        {foundCustomer.loyalty_member && scannedInfo.isOver21 === true && (
           <p className="text-gold text-lg">Loyalty Member</p>
         )}
 
-        <p className="text-zinc-500 text-sm mt-6">Your name will appear on the screen in a moment.</p>
+        <p className="text-white text-lg mt-6">Feel free to browse — we'll call your name when it's your turn.</p>
+        <p className="text-zinc-500 text-sm mt-2">Your name will appear on the screen in a moment.</p>
 
         <input
           ref={inputRef}
@@ -1109,7 +1209,8 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
         <p className="text-3xl text-white mb-4">
           {foundCustomer.first_name} {foundCustomer.last_name?.[0] || ''}.
         </p>
-        <p className="text-zinc-400 text-lg">Your name will appear on the screen in a moment.</p>
+        <p className="text-white text-lg">Feel free to browse — we'll call your name when it's your turn.</p>
+        <p className="text-zinc-400 text-sm mt-2">Your name will appear on the screen in a moment.</p>
 
         <input
           ref={inputRef}
@@ -1237,6 +1338,17 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
           autoComplete="off"
         />
       </div>
+    );
+  }
+
+  // CONSENT state - T&C + privacy + marketing acceptance + signature for loyalty enrollment
+  if (status === 'CONSENT' && scannedInfo) {
+    return (
+      <ConsentStep
+        firstName={scannedInfo.firstName}
+        onBack={() => setStatus(foundCustomer ? 'EMAIL_ENTRY' : 'NEW_CUSTOMER_EMAIL')}
+        onAgree={(sig) => (foundCustomer ? existingConsentAgree(sig) : newCustomerConsentAgree(sig))}
+      />
     );
   }
 
@@ -1396,12 +1508,9 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
           </button>
         </div>
 
-        <button
-          onClick={skipNewCustomerPhone}
-          className="mt-6 text-zinc-500 text-sm hover:text-zinc-300 transition-colors"
-        >
-          Skip — continue without a phone number
-        </button>
+        <p className="mt-6 text-zinc-500 text-sm">
+          We use your phone number to find your account on future visits.
+        </p>
       </div>
     );
   }
@@ -1797,7 +1906,7 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
           <svg className="w-32 h-32 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
           </svg>
-        ) : status === 'UNDERAGE' || status === 'INVALID_SCAN' ? (
+        ) : status === 'UNDERAGE' || status === 'INVALID_SCAN' || status === 'CHECKIN_FAILED' ? (
           <svg className="w-32 h-32 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
           </svg>
@@ -1814,11 +1923,12 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
       </div>
 
       <h2 className={`text-4xl font-craft font-bold mb-6 uppercase tracking-tighter ${
-        status === 'UNDERAGE' ? 'text-red-500' : 'text-white'
+        status === 'UNDERAGE' || status === 'CHECKIN_FAILED' ? 'text-red-500' : 'text-white'
       }`}>
         {status === 'SCANNING' ? 'Reading ID...' :
          status === 'SUCCESS' ? 'ID Verified!' :
          status === 'UNDERAGE' ? 'MUST BE 21+' :
+         status === 'CHECKIN_FAILED' ? "Couldn't Check You In" :
          'Scan Your ID Now'}
       </h2>
 
@@ -1846,12 +1956,17 @@ const IDScan: React.FC<IDScanProps> = ({ onComplete, onGoHome, pendingScanData, 
         </div>
       )}
 
-      <p className={`text-xl mb-12 ${status === 'UNDERAGE' ? 'text-red-400' : 'text-zinc-400'}`}>
+      <p className={`text-xl mb-12 ${status === 'UNDERAGE' || status === 'CHECKIN_FAILED' ? 'text-red-400' : 'text-zinc-400'}`}>
         {status === 'READY' && 'Hold the barcode on the back of your ID under the scanner below.'}
         {status === 'SCANNING' && 'Please wait while we verify your information...'}
         {status === 'SUCCESS' && 'Welcome! Adding you to the queue...'}
         {status === 'UNDERAGE' && 'Sorry, you must be 21 or older to enter. Please see a staff member.'}
+        {status === 'CHECKIN_FAILED' && 'Please see a budtender for help — they will add you to the queue.'}
       </p>
+
+      {status === 'SUCCESS' && (
+        <p className="text-white text-lg mb-10 -mt-6">Feel free to browse — we'll call your name when it's your turn.</p>
+      )}
 
       {/* Hidden input for scanner - scanners act as keyboards */}
       <input

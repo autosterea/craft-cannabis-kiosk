@@ -113,7 +113,13 @@ declare global {
       onIncogweedoEnabledChanged: (callback: (enabled: boolean) => void) => () => void;
       logFailedScan: (rawBarcode: string, parserError: string) => Promise<{ ok: boolean }>;
       getFailedScans: (limit?: number) => Promise<Array<{ id: number; raw_barcode: string; parser_error: string; venue_id: string; created_at: string }>>;
+      saveLoyaltyConsent: (data: { customerId: number | null; customerName: string; termsVersion: string; signaturePng: string }) => Promise<{ ok: boolean }>;
+      getLoyaltyConsents: (limit?: number) => Promise<Array<{ id: number; customer_id: number | null; customer_name: string; venue_id: string; terms_version: string; signature_png: string; signed_at: string }>>;
       lookupIncomingOrder: (customerId: number) => Promise<any | null>;
+      getOnlineOrderTill: () => Promise<string>;
+      getKioskActive: () => Promise<boolean>;
+      setKioskActive: (active: boolean) => Promise<{ success: boolean; active: boolean }>;
+      onKioskActiveChanged: (callback: (active: boolean) => void) => () => void;
       toggleFullscreen: () => Promise<boolean>;
       getFullscreen: () => Promise<boolean>;
       getBlockedWords: () => Promise<string[]>;
